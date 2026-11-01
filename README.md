@@ -1,0 +1,63 @@
+# GlassineOS/epd
+
+The e-ink panel engine and the daemons that own the panel. On a device whose display
+controller is a software TCON (the kernel only scans out what it's given), every
+refresh is computed here: the engine turns grey frames into the panel's drive
+frames using the panel's waveform file, schedules overlapping updates, and keeps
+track of what the panel shows.
+
+## Contents
+
+| Path | What |
+|---|---|
+| `src/epd-engine.c` | the engine: waveform file, drive frames, the update scheduler, the panel model |
+| `src/epd-drm.c` | streams drive frames to the panel through DRM (mainline kernel) |
+| `src/epd-gpu.c`, `src/epd-stagger.c` | the engine's passes on the GPU (EGL / GLES compute) and the staggered fast steps |
+| `src/epd-policy.c`, `src/epd-motion.c` | the refresh policy: which mode, when to clean up, motion |
+| `src/epd-ingest.c`, `src/epd-wl.c`, `src/epd-comp.c` | frame ingest: from the Wayland compositor's e-ink output backend, or as the X compositing manager |
+| `src/epd-brush.c` | pen preview brushes |
+| `src/glassine-epdd.c` | **glassine-epdd**: the recovery's panel daemon (CPU engine, static, no GPU) |
+| `src/glassine-epdd-desktop.c` | **glassine-epdd-desktop**: the desktop session's panel daemon (GPU engine) |
+| `src/glassine-epd-show.c` | **glassine-epd-show**: shows a PGM on the panel (boot splash) |
+| `src/glassine-epd-proto.h` | the frame protocol: a client (the recovery's UI) ↔ glassine-epdd |
+| `src/glassine-epd-output-proto.h` | the output protocol: the compositor's e-ink output backend ↔ glassine-epdd-desktop |
+| `src/test/` | host tests (`run.sh`) and a synthetic waveform generator |
+
+No waveform file is in this repository. A waveform belongs to the panel; the device
+package fetches it from the device at runtime (`waveform` in the adapter config).
+
+## Device adapter
+
+The daemons read everything about the device from an adapter config shipped by the
+device package (`/etc/glassine/epd.conf`: panel size, rotation, waveform path,
+temperature and frontlight files; see the head of `src/glassine-epdd.c`). The engine
+itself is still built for one panel geometry (1872 × 1404, `src/epd-engine.h`); making
+that a runtime setting is open work.
+
+## Runtime interfaces
+
+Other components depend on these names; changing one is a coordinated change.
+
+| Name | Used by |
+|---|---|
+| `/dev/socket/glassine-epd` (default) | the recovery UI (frame protocol) |
+| `/run/glassine-epdd-desktop.ctl` | control FIFO of the desktop daemon (settings, shell, tests) |
+| `/run/glassine-epdd-desktop.levels`, `.classes`, `-frames.csv` | status files of the desktop daemon |
+| `/etc/glassine/eink.conf` | per-application refresh profiles |
+| `/etc/glassine/epd.conf` | the device adapter |
+| `GLASSINE_*` environment variables | tuning switches of the desktop daemon and the tests |
+
+## Building and testing
+
+```sh
+make                      # the three programs (C compiler, libdrm; the desktop daemon also X11 + EGL)
+make check                # host tests; GPU tests skip without a render node
+WBF=panel.wbf make check  # also the tests that need a real panel's waveform
+```
+
+CI builds on Alpine arm64 (as packaged), runs the host tests with the synthetic
+waveform, and checks that no development-notebook references or waveform files are committed.
+
+## License
+
+GPL-2.0-or-later (`LICENSE`).

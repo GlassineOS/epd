@@ -1,0 +1,30 @@
+name: build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: the three programs, on Alpine (as packaged), and the host tests
+        run: |
+          docker run --rm -v "$PWD":/src -w /src alpine:3.22 sh -euc '
+            apk add -q build-base linux-headers libdrm-dev libx11-dev libxext-dev libxdamage-dev \
+              libxfixes-dev libxi-dev libxcomposite-dev mesa-dev python3
+            make all
+            make check
+            make DESTDIR=/tmp/d install && find /tmp/d -type f | sort
+            make clean'
+  generic:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: no notebook references, no vendor waveform files
+        run: |
+          set -e
+          # (the kernel's panel driver is still named panel-onyx-n*1-link)
+          if git grep -n -i -w -E 'l[a]b|n[a]1|s1[0-9][0-9][a-z]?' -- . ':!LICENSE' | grep -v -E 'panel[-_]onyx[-_]n[a]1[-_]link'; then exit 1; fi
+          git grep -n -E 'P[h]ase [0-9]|§|docs/p[h]ases' -- . ':!.github/workflows/build.yml' && exit 1
+          git ls-files | grep -i -E '\.(wbf|bin)$' && exit 1
+          echo clean

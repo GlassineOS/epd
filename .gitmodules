@@ -1,0 +1,3 @@
+[submodule ".glassine/org"]
+	path = .glassine/org
+	url = https://github.com/GlassineOS/.github
