@@ -1852,12 +1852,13 @@ static void *worker(void *arg)
     }
     pthread_mutex_lock(&s->wmu);
     int i = s->wleft++ + 1;         /* part index, assigned at start */
-    unsigned seen = s->gen;
+    /* both before the opener can go on: wleft is what it waits for, and a claim posted
+     * during the setup below would count as seen and never run (the stream hangs in band_wait) */
+    unsigned seen = s->gen, bseen = s->bgen;
     pthread_mutex_unlock(&s->wmu);
     rt_thread_setup(s, i);
     if (rt) worker_policy(s, i, rt);
     pthread_mutex_lock(&s->wmu);
-    unsigned bseen = s->bgen;
     pthread_cond_broadcast(&s->wdone);
     for (;;) {
         while (s->gen == seen && s->bgen == bseen && !upd_avail(s) && !s->wquit) pthread_cond_wait(&s->wgo[i], &s->wmu);
