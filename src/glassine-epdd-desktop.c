@@ -3017,7 +3017,7 @@ static inkbh *bh_get(const char *id)
  * profile has ink=on: the daemon cannot tell drawing from tapping a menu, and does
  * not know the app's brush (preview = black, width from pressure). No preview
  * for the eraser tool or with a side button held.
- * Pen devices: every evdev whose name starts with "Note Air 1 Pen" (glassine-penfix's, stock
+ * Pen devices: every evdev whose name starts with "Glassine Pen" (glassine-penfix's, stock
  * kernel), or the mainline i2c-hid Wacom node with pressure ("... 2D1F:012B ..."). */
 #define MAXPEN 4
 static struct pen {
@@ -3059,12 +3059,12 @@ static void pen_scan(void)
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
         ioctl(fd, EVIOCGNAME(sizeof name), name);
-        /* stock: glassine-penfix's "Note Air 1 Pen"; mainline: the Wacom digitizer via
+        /* stock: glassine-penfix's "Glassine Pen"; mainline: the Wacom digitizer via
          * i2c-hid ("... 2D1F:012B ..."), only its node with pressure */
         unsigned long absb[(ABS_MAX + 1 + 8 * sizeof(long) - 1) / (8 * sizeof(long))] = { 0 };
         ioctl(fd, EVIOCGBIT(EV_ABS, sizeof absb), absb);
         int has_p = (absb[ABS_PRESSURE / (8 * sizeof(long))] >> (ABS_PRESSURE % (8 * sizeof(long)))) & 1;
-        if (strncmp(name, "Note Air 1 Pen", 7) && !(strstr(name, "2D1F:012B") && has_p)) { close(fd); continue; }
+        if (strncmp(name, "Glassine Pen", 12) && !(strstr(name, "2D1F:012B") && has_p)) { close(fd); continue; }
         struct pen *p = &pens[npens++];
         memset(p, 0, sizeof *p);
         struct input_absinfo a;
@@ -3659,7 +3659,7 @@ static int touch_xmax = 1, touch_ymax = 1;
  * taken as the short side (1404/1872 of a height) — a rotated panel misjudges
  * by <= 4/3 */
 static int touch_slot, tv_nx = -1, tv_ny = -1;
-/* the touchscreen: "Note Air 1 Touch" (glassine-touchd's clone; the raw device is grabbed by
+/* the touchscreen: "Glassine Touch" (glassine-touchd's clone; the raw device is grabbed by
  * it and silent) if it exists, else the raw "cyttsp5_mt". touch_recheck opens
  * it again when it went away or the clone appeared later. */
 static int touch_is_clone;
@@ -3677,7 +3677,7 @@ static void touch_open(void)
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
         ioctl(fd, EVIOCGNAME(sizeof name), name);
-        int is_clone = !strcmp(name, "Note Air 1 Touch");
+        int is_clone = !strcmp(name, "Glassine Touch");
         if (is_clone || (best < 0 && strstr(name, "cyttsp5"))) {
             if (best >= 0) close(best);
             best = fd;
@@ -3788,7 +3788,7 @@ static int bit_set(const unsigned long *b, int n) { return (b[n / (8 * sizeof(lo
 static int act_wanted(int fd, const char *name)
 {
     unsigned long ev[BITS(EV_MAX)] = { 0 }, key[BITS(KEY_MAX)] = { 0 }, rel[BITS(REL_MAX)] = { 0 }, prop[BITS(INPUT_PROP_MAX)] = { 0 };
-    if (!strcmp(name, "Note Air 1 Touch") || strstr(name, "cyttsp5")) return 0;
+    if (!strcmp(name, "Glassine Touch") || strstr(name, "cyttsp5")) return 0;
     if (ioctl(fd, EVIOCGBIT(0, sizeof ev), ev) < 0) return 0;
     ioctl(fd, EVIOCGPROP(sizeof prop), prop);
     if (bit_set(prop, INPUT_PROP_DIRECT)) return 0;         /* touchscreens, pens */
