@@ -147,12 +147,14 @@
  * sampler; "stats" also writes the newest 1024 records to
  * /run/glassine-epdd-desktop-frames.csv. eink.conf: @drive_prof=on
  * drive_prof_csv=PATH|off ... plus one CSV row per iteration into PATH (and
- * PATH.freq: the 20 Hz cpufreq samples); implies on. The
- * path must not contain another command's word (stats,
- * sleep, state, heal, mark, wake, ...): e.g. /run/glassine-dprof.csv
+ * PATH.freq: the 20 Hz cpufreq samples); implies on. PATH must be a file
+ * name in /run/glassine-epdd-prof (the daemon creates it; root's, 0750,
+ * group video; epd-profpath.h): any other path is refused, and the file is
+ * created at 0640. The path must not contain another command's word (stats,
+ * sleep, state, heal, mark, wake, ...): e.g. /run/glassine-epdd-prof/dprof.csv
  * main_prof=on|off the main thread's split per burst (snap/ingest, scan,
  * policy, dizzy, commit, the sends; "epd-prof main" lines)
- * main_prof_csv=PATH|off ... one CSV row per burst into PATH
+ * main_prof_csv=PATH|off ... one CSV row per burst into PATH (the same rule)
  * prof_every=N both summaries every N s (default 5)
  * busy=F busy content (video, animations): >= 3 bursts a second covering
  * >= F of the screen count as motion like a finger, so their run
@@ -162,7 +164,8 @@
  * uncached, see snap)
  * srccheck log whether fb0 and XGetImage agree on every pixel
  * shot save the panel buffer and a fresh full-screen read as
- * panel-order PGMs in /tmp (glassine-shot-panel.pgm, glassine-shot-src.pgm)
+ * panel-order PGMs in /run/glassine-epdd-prof (glassine-shot-panel.pgm,
+ * glassine-shot-src.pgm; dcmap and srccheck write theirs there too)
  * alpha_cut=F GPU compositing: ARGB pixels with alpha below F are left out
  * (soft shadows, rounded-corner fringes), the rest is opaque (0.5)
  * flash_full=F flashes of at least this screen fraction use the driver's
@@ -527,6 +530,7 @@
 #include "epd-dither.h"
 #include "epd-dizzy.h"
 #include "epd-brush.h"
+#include "epd-profpath.h"
 #ifdef EPD_GPU
 extern int epd_gpu_stag_timer;         /* epd-gpu.c: the stagger's timer queries */
 extern double epd_gpu_stag_ms[3];
@@ -732,17 +736,39 @@ static void prof_token(char *d, size_t n, const char *v)
     d[k] = 0;
 }
 
+/* the group "video" (eink.conf, the control FIFO and EPD_PROF_DIR belong to it); 0 = none */
+static gid_t video_gid(void)
+{
+    struct group *g = getgrnam("video");
+    return g ? g->gr_gid : 0;
+}
+
+/* a file the daemon names itself (shot, dcmap, srccheck): in EPD_PROF_DIR, 0640,
+ * never through a symlink; NULL (said on stderr) when it can't be had */
+static FILE *prof_out(const char *name)
+{
+    char p[PATH_MAX];
+    FILE *f = epd_prof_fopen(epd_prof_name(p, sizeof p, name));
+    if (!f) fprintf(stderr, "glassine-epdd-desktop: %s: %s\n", p, strerror(errno));
+    return f;
+}
+
 static void main_prof_csv_set(const char *v)
 {
     char path[256];
     prof_token(path, sizeof path, v);
     if (!strcmp(path, mprof_csv_path)) return;      /* (an eink.conf reload: not truncated again) */
+    int off = !*path || !strcmp(path, "off");
+    if (!off && !epd_prof_path_ok(EPD_PROF_DIR, path)) {   /* (the FIFO and eink.conf are not trusted with a path) */
+        fprintf(stderr, "glassine-epdd-desktop: main_prof_csv=%s: refused, a file name in %s only\n", path, EPD_PROF_DIR);
+        return;
+    }
     snprintf(mprof_csv_path, sizeof mprof_csv_path, "%s", path);
     if (mprof_csv) { fclose(mprof_csv); mprof_csv = NULL; }
-    if (!*path || !strcmp(path, "off")) return;
+    if (off) return;
     if (!mprof) main_prof_set(1);
     if (!mprof) return;
-    if (!(mprof_csv = fopen(path, "we"))) { perror(path); return; }
+    if (!(mprof_csv = epd_prof_fopen(path))) { perror(path); return; }
     epd_prof_csv_head(mprof, mprof_csv, NULL);
 }
 
@@ -1025,7 +1051,9 @@ static void apply_cmd(const char *cmd)
     if ((v = strstr(cmd, "drive_prof_csv="))) {
         char path[256];
         prof_token(path, sizeof path, v + 15);
-        if (strcmp(path, drive_prof_csv)) {
+        if (*path && strcmp(path, "off") && !epd_prof_path_ok(EPD_PROF_DIR, path))
+            fprintf(stderr, "glassine-epdd-desktop: drive_prof_csv=%s: refused, a file name in %s only\n", path, EPD_PROF_DIR);
+        else if (strcmp(path, drive_prof_csv)) {
             snprintf(drive_prof_csv, sizeof drive_prof_csv, "%s", path);
             drive_prof_csv_new = 1;
             if (drive_prof < 0 && *path && strcmp(path, "off")) drive_prof = 1;     /* (a CSV implies on) */
@@ -2892,7 +2920,7 @@ static void src_check(Display *dpy, Window root, int W, int H)
     if (diff) fprintf(stderr, " (first at panel %d,%d)\n", a.bx0 + fx, fy);
     /* both as panel-order PGMs, for a look */
     for (int k = 0; k < 2; k++) {
-        FILE *o = fopen(k ? "/tmp/glassine-srccheck-x.pgm" : "/tmp/glassine-srccheck-fb.pgm", "w");
+        FILE *o = prof_out(k ? "glassine-srccheck-x.pgm" : "glassine-srccheck-fb.pgm");
         if (!o) continue;
         fprintf(o, "P5 %d %d 255\n", a.w, a.h);
         fwrite(k ? x.g : a.g, 1, (size_t)n, o);
@@ -5123,8 +5151,17 @@ int main(int argc, char **argv)
     parts = XFixesCreateRegion(dpy, NULL, 0);
     }
 
-    mkfifo(CTL, 0666);
-    chmod(CTL, 0666);   /* the desktop user's "Refresh screen" launcher writes it */
+    /* root:video 0660: the desktop user's "Refresh screen" launcher and sway write it as
+     * members of group video (like eink.conf); any other user can't. Made 0600 first so it
+     * is never open wider than that; an older image's 0666 FIFO is narrowed too. No group
+     * video: root only */
+    {
+        gid_t vg = video_gid();
+        mkfifo(CTL, 0600);
+        if (chown(CTL, (uid_t)-1, vg)) perror(CTL);
+        chmod(CTL, 0660);
+        epd_prof_dir_make(EPD_PROF_DIR, vg);        /* (the CSVs and shots go there) */
+    }
     int ctl = open(CTL, O_RDWR | O_NONBLOCK | O_CLOEXEC);
 
     /* same init sequence as glassine-epd-show */
@@ -5555,7 +5592,7 @@ int main(int argc, char **argv)
                 static uint8_t lvm[EPD_W * EPD_H], opm[EPD_W * EPD_H];
                 int opr = 0;
                 epd_stream_dc_map(eng, dcm, lvm, opm, &opr);
-                FILE *o = fopen("/tmp/glassine-dc.pgm", "w");
+                FILE *o = prof_out("glassine-dc.pgm");
                 long n = 0, pos = 0, grey = 0, hist[8] = { 0 };
                 int x0 = EPD_W, y0 = EPD_H, x1 = -1, y1 = -1;
                 if (o) fprintf(o, "P5 %d %d 255\n", EPD_W, EPD_H);
@@ -5575,7 +5612,7 @@ int main(int argc, char **argv)
                 /* the engine's idea of each pixel's level (0 black .. 30 white; x8 in
                  * the PGM): against the shot's panel buffer, where the model thinks
                  * a pixel is not at its target yet, or wrongly thinks it is */
-                if ((o = fopen("/tmp/glassine-lv.pgm", "w"))) {
+                if ((o = prof_out("glassine-lv.pgm"))) {
                     fprintf(o, "P5 %d %d 255\n", EPD_W, EPD_H);
                     for (int i = 0; i < EPD_W * EPD_H; i++) fputc(lvm[i] > 31 ? 255 : lvm[i] * 8, o);
                     fclose(o);
@@ -5583,7 +5620,7 @@ int main(int argc, char **argv)
                 /* the panel model: where the engine thinks each pixel really is
                  * (0 black .. op_r white, scaled to 0..255; 0 everywhere = no model) */
                 long opoff = 0;
-                if (opr > 0 && (o = fopen("/tmp/glassine-op.pgm", "w"))) {
+                if (opr > 0 && (o = prof_out("glassine-op.pgm"))) {
                     fprintf(o, "P5 %d %d 255\n", EPD_W, EPD_H);
                     for (int i = 0; i < EPD_W * EPD_H; i++) {
                         int v = opm[i] > opr ? opr : opm[i];
@@ -5593,15 +5630,15 @@ int main(int argc, char **argv)
                     }
                     fclose(o);
                 }
-                fprintf(stderr, "glassine-epdd-desktop: dcmap: /tmp/glassine-op.pgm (panel model, op_r %d): %ld pixels at a rail level whose model is on the other half\n",
-                        opr, opoff);
-                fprintf(stderr, "glassine-epdd-desktop: dcmap: /tmp/glassine-dc.pgm (|dc|, panel order), /tmp/glassine-lv.pgm (levels x8); |dc| by 32s: %ld %ld %ld %ld %ld %ld %ld %ld; "
+                fprintf(stderr, "glassine-epdd-desktop: dcmap: %s/glassine-op.pgm (panel model, op_r %d): %ld pixels at a rail level whose model is on the other half\n",
+                        EPD_PROF_DIR, opr, opoff);
+                fprintf(stderr, "glassine-epdd-desktop: dcmap: %s/glassine-dc.pgm (|dc|, panel order), glassine-lv.pgm (levels x8); |dc| by 32s: %ld %ld %ld %ld %ld %ld %ld %ld; "
                         "%ld beyond %d (%ld positive, %ld now grey) in x %d..%d y %d..%d\n",
-                        hist[0], hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7], n, DC_WARN, pos, grey, x0, x1, y0, y1);
+                        EPD_PROF_DIR, hist[0], hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7], n, DC_WARN, pos, grey, x0, x1, y0, y1);
             }
             if (strstr(cmd, "srccheck") && dpy) src_check(dpy, root, W, H);
             if (strstr(cmd, "shot")) {           /* panel-order PGMs: the panel buffer + a fresh full read */
-                FILE *o = fopen("/tmp/glassine-shot-panel.pgm", "w");
+                FILE *o = prof_out("glassine-shot-panel.pgm");
                 if (o) {
                     pthread_mutex_lock(&buf_mu);
                     fprintf(o, "P5 %d %d 255\n", PW, PH);
@@ -5610,14 +5647,14 @@ int main(int argc, char **argv)
                     fclose(o);
                 }
                 frame f = snap(dpy, root, (box){ 0, 0, W, H }, src_fb);
-                if (f.g && (o = fopen("/tmp/glassine-shot-src.pgm", "w"))) {
+                if (f.g && (o = prof_out("glassine-shot-src.pgm"))) {
                     fprintf(o, "P5 %d %d 255\n", f.w, f.h);
                     for (int r = 0; r < f.h; r++) fwrite(f.g + (size_t)r * f.s, 1, (size_t)f.w, o);
                     fclose(o);
                 }
                 fbuf_put(f.g);
-                fprintf(stderr, "glassine-epdd-desktop: shot: /tmp/glassine-shot-panel.pgm (panel buffer), /tmp/glassine-shot-src.pgm (%s now)\n",
-                        wl ? "sway" : cm ? "composited" : "X root");
+                fprintf(stderr, "glassine-epdd-desktop: shot: %s/glassine-shot-panel.pgm (panel buffer), glassine-shot-src.pgm (%s now)\n",
+                        EPD_PROF_DIR, wl ? "sway" : cm ? "composited" : "X root");
             }
             if (strstr(cmd, "stats") && wl) {
                 unsigned long nf, npre, nstale;
