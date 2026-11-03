@@ -26,6 +26,7 @@
 #include "epd-drm.h"
 #include "epd-jit.h"
 #include "epd-prof.h"
+#include "epd-profpath.h"
 #ifdef EPD_GPU
 #include "epd-gpu.h"
 #include "epd-bp4.h"
@@ -756,8 +757,9 @@ static void *fq_thread(void *arg)
         if (gen != fq_gen) {
             gen = fq_gen;
             if (out) fclose(out);
-            out = fq_path[0] ? fopen(fq_path, "we") : NULL;
+            out = fq_path[0] ? epd_prof_fopen(fq_path) : NULL;     /* (a control line named it: see epd-profpath.h) */
             if (out) fprintf(out, "t_s,policy,cpus,khz\n");
+            else if (fq_path[0]) perror(fq_path);
         }
         pthread_mutex_unlock(&fq_mu);
         double t = now();
@@ -836,7 +838,7 @@ static void prof_apply(epd_stream *s, struct inmsg *m)
     if (m->str) {
         if (d->csv) { fclose(d->csv); d->csv = NULL; }
         if (*m->str && strcmp(m->str, "off")) {
-            d->csv = fopen(m->str, "we");
+            d->csv = epd_prof_fopen(m->str);    /* (a control line named it: only a file in EPD_PROF_DIR) */
             if (!d->csv) perror(m->str);
             else { setvbuf(d->csv, NULL, _IOFBF, 1 << 16); dp_csv_head(d); }
         }
@@ -960,9 +962,11 @@ static void prof_close(epd_stream *s)
     d->it0 = t;
 }
 
+#define PROF_DUMP_DEFAULT "/run/glassine-epdd-desktop-frames.csv"
 static void prof_dump_file(struct dprof *d, const char *path)
 {
-    FILE *f = fopen(path, "we");
+    /* (the default is the daemon's own; a path given is confined like the CSVs) */
+    FILE *f = !strcmp(path, PROF_DUMP_DEFAULT) ? epd_prof_open_file(path) : epd_prof_fopen(path);
     if (!f) { perror(path); return; }
     dp_csv_head_to(f);
     unsigned long n = d->nraw < DP_RAW ? d->nraw : DP_RAW;
@@ -1016,7 +1020,7 @@ static void prof_report(epd_stream *s, int force)
     d->drains = d->msgs = d->msgs_max = d->eng_frames = d->claim_frames = d->adv_frames = 0;
     if (d->csv) fflush(d->csv);
     if (d->dump) {
-        prof_dump_file(d, *d->dump ? d->dump : "/run/glassine-epdd-desktop-frames.csv");
+        prof_dump_file(d, *d->dump ? d->dump : PROF_DUMP_DEFAULT);
         free(d->dump);
         d->dump = NULL;
     }

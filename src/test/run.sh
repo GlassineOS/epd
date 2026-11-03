@@ -32,6 +32,10 @@ PARITY2_SELFTEST=2 $B/epd-policy-parity2 1 3000 | tail -1
 c -o $B/epd-motion-test ../epd-motion.c epd-motion-test.c -lm
 $B/epd-motion-test
 
+# the files a control line may name: only a file name in the daemon's directory, 0640, no symlinks
+c -o $B/epd-profpath-test epd-profpath-test.c
+$B/epd-profpath-test
+
 # the engine on the CPU
 if real epd-matched; then  # the matched-cut model's settling and DC figures
     c -o $B/epd-matched-test ../epd-engine.c epd-matched-test.c
