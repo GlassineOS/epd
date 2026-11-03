@@ -2,13 +2,23 @@
  * then per frame the buffer id and its damage (FRAME); we map every buffer
  * read-only and answer DONE (epd_wl_done) when the frame's pixels are no
  * longer needed. One backend at a time: a new connection replaces the old
- * (sway restarted), and it resends its buffers and a whole frame. */
+ * (sway restarted), and it resends its buffers and a whole frame.
+ *
+ * The socket is root:video 0660 and each connection's peer credentials are
+ * checked at accept (root, the daemon's own user, or a member of group video):
+ * a refused peer never replaces the connected backend. A buffer's fd is
+ * mapped only if it can't shrink under the mapping (a memfd sealed with
+ * F_SEAL_SHRINK, which we add when the sender left it open, or a dma-buf) and
+ * is as large as the buffer: a short or shrunk file would raise SIGBUS in the
+ * root daemon on the first read. */
 #define _GNU_SOURCE
 #include "epd-wl.h"
 #include "glassine-epd-output-proto.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <grp.h>
+#include <pwd.h>
 #include <linux/dma-buf.h>
 #include <sys/ioctl.h>
 #include <stdio.h>
@@ -17,7 +27,9 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/un.h>
+#include <sys/vfs.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,9 +37,14 @@
 #define XRGB8888 0x34325258u                /* DRM fourccs: the alpha is ignored */
 #define ARGB8888 0x34325241u
 #define R8 0x20203852u                      /* grey, panel order */
+#ifndef DMA_BUF_MAGIC
+#define DMA_BUF_MAGIC 0x444d4142            /* statfs f_type of a dma-buf's file (linux/magic.h) */
+#endif
 
 struct epd_wl {
     int ls, fd;                             /* listening, connected (-1: none) */
+    uid_t uid;                              /* the user allowed besides root and the group (-1: none) */
+    gid_t gid;                              /* the group allowed (-1: none) */
     int w, h;
     epd_wl_rect_fn fn;
     void *ctx;
@@ -138,21 +155,52 @@ epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx
     epd_wl *s = calloc(1, sizeof *s);
     if (!s) return NULL;
     s->fd = -1; s->w = w; s->h = h; s->fn = fn; s->ctx = ctx;
+    s->uid = geteuid();
+    struct group *vg = getgrnam("video");
+    s->gid = vg ? vg->gr_gid : (gid_t)-1;   /* no group video: root and our own user only */
     for (int i = 0; i < MAXBUF; i++) { s->buf[i].dma.fd = -1; s->buf[i].dma.handle = -1; }
     s->ls = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     struct sockaddr_un sa = { .sun_family = AF_UNIX };
     if (!path) path = getenv("GLASSINE_EPD_SOCK");    /* as the backend: host tests */
     snprintf(sa.sun_path, sizeof sa.sun_path, "%s", path ? path : GLASSINE_EPD_SOCK);
     unlink(sa.sun_path);
-    if (s->ls < 0 || bind(s->ls, (struct sockaddr *)&sa, sizeof sa) || listen(s->ls, 1)) {
+    mode_t um = umask(0177);                /* never open wider than 0600 until the group is set */
+    int bad = s->ls < 0 || bind(s->ls, (struct sockaddr *)&sa, sizeof sa) || listen(s->ls, 1);
+    umask(um);
+    if (bad) {
         perror("glassine-epdd-desktop: wl: listen");
         if (s->ls >= 0) close(s->ls);
         free(s);
         return NULL;
     }
-    chmod(sa.sun_path, 0666);               /* sway runs as the desktop user */
+    /* root:video 0660: sway runs as the desktop user, a member of video (as for the control FIFO);
+     * any other user can't connect. (A failed chown leaves the daemon's own group, still not world) */
+    if (s->gid != (gid_t)-1 && chown(sa.sun_path, (uid_t)-1, s->gid)) perror(sa.sun_path);
+    if (chmod(sa.sun_path, 0660)) perror(sa.sun_path);
     fprintf(stderr, "glassine-epdd-desktop: wl: listening on %s for %dx%d frames\n", sa.sun_path, w, h);
     return s;
+}
+
+void epd_wl_set_peers(epd_wl *s, uid_t uid, gid_t gid) { s->uid = uid; s->gid = gid; }
+
+/* may a process with these credentials be the backend: root, the one user, or a member of the group */
+int epd_wl_peer_ok(const epd_wl *s, uid_t uid, gid_t gid)
+{
+    if (uid == 0 || uid == s->uid) return 1;
+    if (s->gid == (gid_t)-1) return 0;
+    if (gid == s->gid) return 1;
+    struct passwd *pw = getpwuid(uid);
+    if (!pw) return 0;
+    int n = 32, ok = 0;
+    gid_t *g = malloc(n * sizeof *g);
+    if (g && getgrouplist(pw->pw_name, pw->pw_gid, g, &n) < 0 && n > 0) {      /* (n: how many it needs) */
+        gid_t *g2 = realloc(g, n * sizeof *g);
+        if (!g2 || getgrouplist(pw->pw_name, pw->pw_gid, g2, &n) < 0) n = 0;
+        g = g2 ? g2 : g;
+    }
+    for (int i = 0; g && i < n; i++) ok |= g[i] == s->gid;
+    free(g);
+    return ok;
 }
 
 void epd_wl_close(epd_wl *s)
@@ -177,6 +225,28 @@ static int find(const epd_wl *s, uint32_t id)
     return -1;
 }
 
+/* NULL: bytes [0, need) of fd can be mapped and read without a SIGBUS; else why not.
+ * A dma-buf is bounded by the kernel (its mapping can't outgrow the buffer), its size is checked.
+ * Any other file must be a memfd that can't shrink: sealed against it here when the sender
+ * left that to us (the seal first, then the size: after it the size can't drop). A regular
+ * file, or a memfd that allows no sealing, can be truncated by its owner while we read it */
+static const char *fd_refuse(int fd, size_t need)
+{
+    struct statfs sf;
+    struct stat st;
+    if (!fstatfs(fd, &sf) && (unsigned long)sf.f_type == (unsigned long)DMA_BUF_MAGIC) {
+        if (fstat(fd, &st)) return "fstat failed";
+        off_t n = st.st_size ? st.st_size : lseek(fd, 0, SEEK_END);
+        return n >= 0 && (unsigned long long)n >= need ? NULL : "dma-buf smaller than the buffer";
+    }
+    int seals = fcntl(fd, F_GET_SEALS);
+    if (seals < 0) return "not a memfd (could be truncated while mapped)";
+    if (!(seals & F_SEAL_SHRINK) && fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) < 0)
+        return "memfd that can't be sealed against shrinking (F_SEAL_SHRINK)";
+    if (fstat(fd, &st)) return "fstat failed";
+    return st.st_size >= 0 && (unsigned long long)st.st_size >= need ? NULL : "file smaller than the buffer";
+}
+
 static void on_buf(epd_wl *s, const struct glassine_epd_msg *m, int rfd, int dma)
 {
     int i = find(s, m->id);
@@ -191,8 +261,14 @@ static void on_buf(epd_wl *s, const struct glassine_epd_msg *m, int rfd, int dma
         if (rfd >= 0) close(rfd);
         return;
     }
-    if (s->buf[i].live) drop_one(s, i);
     size_t len = (size_t)m->offset + (size_t)m->stride * m->height;
+    const char *why = fd_refuse(rfd, len);
+    if (why) {
+        fprintf(stderr, "glassine-epdd-desktop: wl: %s %u refused: %s\n", dma ? "dma-buf" : "buffer", m->id, why);
+        close(rfd);
+        return;
+    }
+    if (s->buf[i].live) drop_one(s, i);
     s->buf[i].id = m->id; s->buf[i].w = m->width; s->buf[i].h = m->height; s->buf[i].stride = m->stride;
     s->buf[i].format = m->format; s->buf[i].offset = m->offset; s->buf[i].len = len;
     s->buf[i].live = 1;
@@ -475,10 +551,13 @@ static void on_cursor_img(epd_wl *s, const struct glassine_epd_msg *m, int rfd)
 {
     if (rfd >= 0) {
         if (s->cur.map) munmap(s->cur.map, 2 * GLASSINE_EPD_CUR_SLOT);
-        void *p = mmap(NULL, 2 * GLASSINE_EPD_CUR_SLOT, PROT_READ, MAP_SHARED, rfd, 0);
+        s->cur.map = NULL;
+        const char *why = fd_refuse(rfd, 2 * GLASSINE_EPD_CUR_SLOT);
+        void *p = why ? MAP_FAILED : mmap(NULL, 2 * GLASSINE_EPD_CUR_SLOT, PROT_READ, MAP_SHARED, rfd, 0);
         close(rfd);
         s->cur.map = p == MAP_FAILED ? NULL : p;
-        if (!s->cur.map) perror("glassine-epdd-desktop: wl: cursor mmap");
+        if (why) fprintf(stderr, "glassine-epdd-desktop: wl: cursor memfd refused: %s\n", why);
+        else if (!s->cur.map) perror("glassine-epdd-desktop: wl: cursor mmap");
     }
     int ok = m->width <= GLASSINE_EPD_CUR_MAX && m->height <= GLASSINE_EPD_CUR_MAX && m->stride >= m->width * 4 &&
              m->offset <= GLASSINE_EPD_CUR_SLOT && m->stride % 4 == 0 && (size_t)m->stride * m->height <= GLASSINE_EPD_CUR_SLOT;
@@ -525,13 +604,19 @@ unsigned long epd_wl_skipped(epd_wl *s)
 int epd_wl_dispatch(epd_wl *s)
 {
     int n = 0;
-    {                                       /* a new backend replaces the old one */
+    for (;;) {                              /* a new backend replaces the old one, if it is one we allow */
         int c = accept4(s->ls, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
-        if (c >= 0) {
-            disconnect(s);
-            s->fd = c;
-            fprintf(stderr, "glassine-epdd-desktop: wl: backend connected\n");
+        if (c < 0) break;
+        struct ucred uc;
+        socklen_t ul = sizeof uc;
+        if (getsockopt(c, SOL_SOCKET, SO_PEERCRED, &uc, &ul) || ul != sizeof uc || !epd_wl_peer_ok(s, uc.uid, uc.gid)) {
+            fprintf(stderr, "glassine-epdd-desktop: wl: connection from uid %u refused\n", ul == sizeof uc ? (unsigned)uc.uid : ~0u);
+            close(c);                       /* (the connected backend is not disturbed) */
+            continue;
         }
+        disconnect(s);
+        s->fd = c;
+        fprintf(stderr, "glassine-epdd-desktop: wl: backend connected\n");
     }
     while (s->fd >= 0) {
         struct glassine_epd_msg m;

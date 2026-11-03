@@ -41,6 +41,7 @@ Other components depend on these names; changing one is a coordinated change.
 | Name | Used by |
 |---|---|
 | `/dev/socket/glassine-epd` (default) | the recovery UI (frame protocol) |
+| `/run/glassine-epd.sock` | sway's glassine-epd output backend (`src/glassine-epd-output-proto.h`); root:video 0660, and only root, the daemon's own user or a member of group `video` is accepted (SO_PEERCRED). Buffer and cursor memfds must be sealable against shrinking (`F_SEAL_SHRINK`, added by the daemon if the sender allowed sealing) and at least as large as the buffer, or the buffer is refused |
 | `/run/glassine-epdd-desktop.ctl` | control FIFO of the desktop daemon (settings, shell, tests); root:video 0660, so its writers must be in group `video` |
 | `/run/glassine-epdd-desktop.levels`, `.classes`, `-frames.csv` | status files of the desktop daemon |
 | `/run/glassine-epdd-prof/` | the only place a control line (`main_prof_csv=`, `drive_prof_csv=`) may write to, and where `shot`, `dcmap` and `srccheck` put their PGMs: root-owned, 0750 group video, files 0640. A path outside it is refused |

@@ -7,7 +7,14 @@
  * then does the backend give the buffer back to sway's swapchain and let sway
  * render the next frame (wlr_output_send_frame): apps draw at the panel's pace.
  *
- * Socket: GLASSINE_EPD_SOCK, AF_UNIX SOCK_SEQPACKET (one message per packet).
+ * Socket: GLASSINE_EPD_SOCK, AF_UNIX SOCK_SEQPACKET (one message per packet),
+ * root:video 0660: the backend's user must be in group video (or root); the
+ * daemon refuses other peers at accept (SO_PEERCRED) and keeps the backend it has.
+ * Every fd it is sent (BUF, DMABUF, the cursor memfd) must be a dma-buf, or a
+ * memfd created with MFD_ALLOW_SEALING (F_SEAL_SHRINK is added by the daemon if
+ * not already set, so the file can't shrink under its mapping) and at least
+ * offset + stride * height bytes (2 * GLASSINE_EPD_CUR_SLOT for the cursor's):
+ * anything else is refused, and its frames are answered DONE unread.
  * glassine-epdd-desktop listens (it owns the panel and lives longer); the backend connects
  * and retries while none is listening. On (re)connect the backend sends BUF for
  * every live buffer, then a full FRAME. No consumer: frames are paced by a
