@@ -98,15 +98,15 @@ typedef void (*epd_wl_cursor_fn)(void *ctx, const epd_wl_cursor *c);
 void epd_wl_set_cursor(epd_wl *s, epd_wl_cursor_fn fn, void *ctx);
 
 /* listen on path (NULL: $GLASSINE_EPD_SOCK, else GLASSINE_EPD_SOCK); frames of any other size than w x h
- * are refused (logged). NULL on failure. The socket is root:video 0660, and a connection is
- * accepted only from root, the daemon's own user, or a member of group video (SO_PEERCRED);
+ * are refused (logged). NULL on failure. The socket is root:<panel group> 0660 (epd-group.h), and a connection is
+ * accepted only from root, the daemon's own user, or a member of that group (SO_PEERCRED);
  * another one is closed and the connected backend stays. A buffer's (or the pointer's) fd is
  * refused unless it is a dma-buf, or a memfd that is sealed against shrinking (F_SEAL_SHRINK;
  * added here when the sender allowed sealing) and at least as large as the buffer. */
 epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx);
 void epd_wl_close(epd_wl *s);
 /* who may connect besides root: user uid ((uid_t)-1: none; the open's default: the daemon's own user)
- * and the members of group gid ((gid_t)-1: none; default: group video, if there is one) */
+ * and the members of group gid ((gid_t)-1: none; default: the panel group, if there is one) */
 void epd_wl_set_peers(epd_wl *s, uid_t uid, gid_t gid);
 /* the policy: would a peer with this uid and primary gid be accepted */
 int epd_wl_peer_ok(const epd_wl *s, uid_t uid, gid_t gid);

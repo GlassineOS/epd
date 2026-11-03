@@ -8,7 +8,7 @@
  * render the next frame (wlr_output_send_frame): apps draw at the panel's pace.
  *
  * Socket: GLASSINE_EPD_SOCK, AF_UNIX SOCK_SEQPACKET (one message per packet),
- * root:video 0660: the backend's user must be in group video (or root); the
+ * root:<panel group> 0660 (group video, or $GLASSINE_EPD_GROUP): the backend's user must be in it (or root); the
  * daemon refuses other peers at accept (SO_PEERCRED) and keeps the backend it has.
  * Every fd it is sent (BUF, DMABUF, the cursor memfd) must be a dma-buf, or a
  * memfd created with MFD_ALLOW_SEALING (F_SEAL_SHRINK is added by the daemon if

@@ -4,8 +4,9 @@
  * longer needed. One backend at a time: a new connection replaces the old
  * (sway restarted), and it resends its buffers and a whole frame.
  *
- * The socket is root:video 0660 and each connection's peer credentials are
- * checked at accept (root, the daemon's own user, or a member of group video):
+ * The socket is root:<panel group> 0660 (epd-group.h: video unless
+ * $GLASSINE_EPD_GROUP) and each connection's peer credentials are
+ * checked at accept (root, the daemon's own user, or a member of that group):
  * a refused peer never replaces the connected backend. A buffer's fd is
  * mapped only if it can't shrink under the mapping (a memfd sealed with
  * F_SEAL_SHRINK, which we add when the sender left it open, or a dma-buf) and
@@ -13,6 +14,7 @@
  * root daemon on the first read. */
 #define _GNU_SOURCE
 #include "epd-wl.h"
+#include "epd-group.h"
 #include "glassine-epd-output-proto.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -156,8 +158,7 @@ epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx
     if (!s) return NULL;
     s->fd = -1; s->w = w; s->h = h; s->fn = fn; s->ctx = ctx;
     s->uid = geteuid();
-    struct group *vg = getgrnam("video");
-    s->gid = vg ? vg->gr_gid : (gid_t)-1;   /* no group video: root and our own user only */
+    s->gid = epd_group((gid_t)-1);          /* the panel group (video): none: root and our own user only */
     for (int i = 0; i < MAXBUF; i++) { s->buf[i].dma.fd = -1; s->buf[i].dma.handle = -1; }
     s->ls = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     struct sockaddr_un sa = { .sun_family = AF_UNIX };
@@ -173,7 +174,7 @@ epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx
         free(s);
         return NULL;
     }
-    /* root:video 0660: sway runs as the desktop user, a member of video (as for the control FIFO);
+    /* root:<panel group> 0660: sway runs as the desktop user, a member of it (as for the control FIFO);
      * any other user can't connect. (A failed chown leaves the daemon's own group, still not world) */
     if (s->gid != (gid_t)-1 && chown(sa.sun_path, (uid_t)-1, s->gid)) perror(sa.sun_path);
     if (chmod(sa.sun_path, 0660)) perror(sa.sun_path);
