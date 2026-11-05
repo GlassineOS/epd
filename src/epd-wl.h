@@ -110,6 +110,9 @@ void epd_wl_close(epd_wl *s);
 void epd_wl_set_peers(epd_wl *s, uid_t uid, gid_t gid);
 /* the policy: would a peer with this uid and primary gid be accepted */
 int epd_wl_peer_ok(const epd_wl *s, uid_t uid, gid_t gid);
+/* (its group scan, for the host test) is gid among user's groups, as `get` (getgrouplist's signature) lists them */
+typedef int (*epd_wl_grouplist_fn)(const char *user, gid_t pgid, gid_t *groups, int *n);
+int epd_wl_group_has(gid_t gid, const char *user, gid_t pgid, epd_wl_grouplist_fn get);
 /* the fds to poll for input: the listening socket, and the backend's
  * connection if there is one; returns how many (1 or 2) */
 int epd_wl_fds(const epd_wl *s, int fd[2]);

@@ -27,6 +27,7 @@
 #include <pwd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include "../epd-wl.h"
 #include "../glassine-epd-output-proto.h"
 
@@ -75,6 +76,27 @@ static void cur_fn(void *ctx, const epd_wl_cursor *c)
     curs++;
     cur = *c;
     if (c->on && c->r.w * c->r.h <= 16 * 16) memcpy(cur_px, c->px, (size_t)c->r.w * c->r.h * 4);
+}
+
+/* a getgrouplist that wants more room than the first try gives (its answer is -1 and the count it needs),
+ * lists need groups: the user's primary one first, then 7001 ... 7000 + need - 1. fail2: its second call fails */
+static int fake_calls, fake_need, fake_fail2;
+static int fake_groups(const char *user, gid_t pgid, gid_t *g, int *n)
+{
+    (void)user;
+    fake_calls++;
+    if (*n < fake_need) { *n = fake_need; return -1; }
+    if (fake_fail2 && fake_calls > 1) return -1;
+    for (int i = 0; i < fake_need; i++) g[i] = i ? (gid_t)(7000 + i) : pgid;
+    *n = fake_need;
+    return fake_need;
+}
+static int fake_has(gid_t want, int need, int fail2, int *calls)
+{
+    fake_calls = 0; fake_need = need; fake_fail2 = fail2;
+    int r = epd_wl_group_has(want, "nobody", 6999, fake_groups);
+    *calls = fake_calls;
+    return r;
 }
 
 static int be;                          /* the fake backend's socket */
@@ -286,27 +308,65 @@ int main(void)
                 CHECK(epd_wl_peer_ok(s, getuid(), 4000000002u), "a supplementary member refused");
             }
         }
+        {                               /* the group scan: room for the first try, more room needed, a second call that fails */
+            int c1, c2, c3, c4;
+            int in_small = fake_has(7002, 3, 0, &c1), pg = fake_has(6999, 3, 0, &c1);
+            int in_big = fake_has(7039, 40, 0, &c2), no_big = fake_has(7040, 40, 0, &c2);
+            int in_fail = fake_has(7039, 40, 1, &c3), pg_fail = fake_has(6999, 40, 1, &c4);
+            CHECK(in_small && pg && c1 == 1, "group scan, a short list: found %d, primary %d, %d calls (want 1, 1, 1)", in_small, pg, c1);
+            CHECK(in_big && !no_big && c2 == 2, "group scan, a list past 32: found the last %d, an absent one %d, %d calls (want 1, 0, 2)",
+                  in_big, no_big, c2);
+            CHECK(!in_fail && !pg_fail && c3 == 2 && c4 == 2, "group scan, the second call failing: found %d / %d, %d calls (want 0, 0, 2)",
+                  in_fail, pg_fail, c3);
+        }
         /* a second connection from a user not allowed: closed, the backend in place is not disturbed.
-         * (root is always allowed: the connection is then not refusable here) */
-        if (getuid() != 0) {
-            epd_wl_set_peers(s, getuid() + 1, (gid_t)-1);
-            int be2 = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+         * root is always allowed, so then the peer is a child that has dropped to an unprivileged uid and gid
+         * (the socket's mode was checked above: opened up here, so that SO_PEERCRED alone decides) */
+        {
             struct sockaddr_un sa = { .sun_family = AF_UNIX };
             snprintf(sa.sun_path, sizeof sa.sun_path, "%s", path);
-            CHECK(!connect(be2, (struct sockaddr *)&sa, sizeof sa), "second connect");
-            usleep(2000);
-            epd_wl_dispatch(s);
-            char x;
-            CHECK(recv(be2, &x, 1, MSG_DONTWAIT) == 0, "the refused connection was not closed");
-            close(be2);
+            if (getuid() == 0) {
+                epd_wl_set_peers(s, (uid_t)-1, getegid());          /* (a group set, so getpwuid is asked too) */
+                CHECK(!chmod(path, 0666), "chmod");
+                int sync[2];
+                CHECK(!pipe(sync), "pipe");
+                pid_t kid = fork();
+                if (kid == 0) {
+                    alarm(10);
+                    if (setgroups(0, NULL) || setresgid(4000000001u, 4000000001u, 4000000001u) ||
+                        setresuid(4000000000u, 4000000000u, 4000000000u)) _exit(2);
+                    int c = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+                    if (c < 0 || connect(c, (struct sockaddr *)&sa, sizeof sa)) _exit(3);
+                    if (write(sync[1], "c", 1) != 1) _exit(5);
+                    char x;
+                    _exit(recv(c, &x, 1, 0) == 0 ? 0 : 4);          /* 0 bytes: the daemon closed it */
+                }
+                close(sync[1]);
+                char c;
+                CHECK(kid > 0 && read(sync[0], &c, 1) == 1, "the unprivileged peer did not connect");
+                close(sync[0]);
+                epd_wl_dispatch(s);                                 /* accept: refused */
+                int st = -1;
+                CHECK(kid > 0 && waitpid(kid, &st, 0) == kid && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+                      "the refused unprivileged connection: child status 0x%x (want exit 0: closed by the daemon)", st);
+                epd_wl_set_peers(s, 0, (gid_t)-1);
+            } else {
+                epd_wl_set_peers(s, getuid() + 1, (gid_t)-1);
+                int be2 = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+                CHECK(!connect(be2, (struct sockaddr *)&sa, sizeof sa), "second connect");
+                usleep(2000);
+                epd_wl_dispatch(s);
+                char x;
+                CHECK(recv(be2, &x, 1, MSG_DONTWAIT) == 0, "the refused connection was not closed");
+                close(be2);
+                epd_wl_set_peers(s, getuid(), (gid_t)-1);
+            }
             paint(0, all, 0x700000);
             frame(s, 1, 1, 0, NULL);
             epd_wl_next(s);
             answers(a, sizeof a);
             CHECK(!strcmp(a, "N1") && dmgs == 1, "the first backend after a refused peer: '%s', damage %d (want N1, 1)", a, dmgs);
-            epd_wl_set_peers(s, getuid(), (gid_t)-1);
-        } else
-            fprintf(stderr, "epd-wl-test: root: the refused-connection check is skipped (the policy is checked above)\n");
+        }
         teardown(s);
 
         /* an undersized memfd: the buffer is refused, a frame for it answered, nothing read (no SIGBUS) */

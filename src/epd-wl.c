@@ -192,24 +192,31 @@ epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx
 
 void epd_wl_set_peers(epd_wl *s, uid_t uid, gid_t gid) { s->uid = uid; s->gid = gid; }
 
-/* may a process with these credentials be the backend: root, the one user, or a member of the group */
+/* is group `want` among the groups of user (its primary one, pgid, and those the group database lists it in):
+ * `get` is getgrouplist's, a parameter so the host test can make it need more room than the first try */
+int epd_wl_group_has(gid_t want, const char *user, gid_t pgid, epd_wl_grouplist_fn get)
+{
+    int n = 32, ok = 0;
+    gid_t *g = malloc(n * sizeof *g);
+    if (g && get(user, pgid, g, &n) < 0 && n > 0) {      /* (n: how many it needs) */
+        gid_t *g2 = realloc(g, n * sizeof *g);
+        if (!g2 || get(user, pgid, g2, &n) < 0) n = 0;
+        g = g2 ? g2 : g;
+    }
+    for (int i = 0; g && i < n; i++) ok |= g[i] == want;
+    free(g);
+    return ok;
+}
+
+/* may a process with these credentials be the backend: root, the one user, or a member of the group
+ * (by the group database: SO_PEERCRED carries no supplementary groups) */
 int epd_wl_peer_ok(const epd_wl *s, uid_t uid, gid_t gid)
 {
     if (uid == 0 || uid == s->uid) return 1;
     if (s->gid == (gid_t)-1) return 0;
     if (gid == s->gid) return 1;
     struct passwd *pw = getpwuid(uid);
-    if (!pw) return 0;
-    int n = 32, ok = 0;
-    gid_t *g = malloc(n * sizeof *g);
-    if (g && getgrouplist(pw->pw_name, pw->pw_gid, g, &n) < 0 && n > 0) {      /* (n: how many it needs) */
-        gid_t *g2 = realloc(g, n * sizeof *g);
-        if (!g2 || getgrouplist(pw->pw_name, pw->pw_gid, g2, &n) < 0) n = 0;
-        g = g2 ? g2 : g;
-    }
-    for (int i = 0; g && i < n; i++) ok |= g[i] == s->gid;
-    free(g);
-    return ok;
+    return pw && epd_wl_group_has(s->gid, pw->pw_name, pw->pw_gid, getgrouplist);
 }
 
 void epd_wl_close(epd_wl *s)
