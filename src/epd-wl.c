@@ -252,10 +252,11 @@ static void on_buf(epd_wl *s, const struct glassine_epd_msg *m, int rfd, int dma
 {
     int i = find(s, m->id);
     if (i < 0) for (i = 0; i < MAXBUF && s->buf[i].live; i++) ;
-    /* XRGB8888 portrait (w x h), or R8 in panel order (h x w: sway's grey output) */
+    /* XRGB8888 portrait (w x h), or R8 in panel order (h x w: sway's grey output). A row is padded by a
+     * few bytes, never by 16 times its width: a stride that large would turn negative in cpu_rects' int */
     int grey = m->format == R8;
     if (i == MAXBUF || rfd < 0 || m->width != (uint32_t)(grey ? s->h : s->w) || m->height != (uint32_t)(grey ? s->w : s->h) ||
-        m->stride < m->width * (grey ? 1 : 4) || (!grey && m->format != XRGB8888 && m->format != ARGB8888)) {
+        m->stride < m->width * (grey ? 1 : 4) || m->stride > 16 * m->width || (!grey && m->format != XRGB8888 && m->format != ARGB8888)) {
         fprintf(stderr, "glassine-epdd-desktop: wl: %s %u refused (%ux%u stride %u format %.4s; want %dx%d XRGB8888 or %dx%d R8)\n",
                 dma ? "dma-buf" : "buffer", m->id, m->width, m->height, m->stride, (const char *)&m->format, s->w, s->h,
                 s->h, s->w);

@@ -380,6 +380,39 @@ int main(void)
         epd_wl_done(s);
         answers(a, sizeof a);
         CHECK(!strcmp(a, "D9") && converts == 0, "frame for an id whose re-send was refused: '%s', %d converts (want D9, 0)", a, converts);
+        /* a stride of 2^31 or more: a sparse memfd of stride * height bytes passes the size check, but
+         * cpu_rects' int stride would go negative and read below the mapping. Refused; 16 * width still read */
+        gd = memfd_create("epd-wl-test-bigstride", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, (off_t)0x80000000u * H), "sparse memfd (%s)", strerror(errno));
+        struct glassine_epd_msg bs = sm;
+        bs.id = 12; bs.stride = 0x80000000u;
+        be_send(&bs, gd);
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        converts = 0;
+        frame(s, 12, 10, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D10") && converts == 0, "stride 2^31: '%s', %d converts (want D10, 0)", a, converts);
+        gd = memfd_create("epd-wl-test-wide", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, (off_t)16 * W * H), "memfd");
+        uint32_t *wm = mmap(NULL, (size_t)16 * W * H, PROT_READ | PROT_WRITE, MAP_SHARED, gd, 0);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) wm[(size_t)y * 16 * W / 4 + x] = 0xa00000u + y * W + x;
+        bs.id = 13; bs.stride = 16 * W;
+        be_send(&bs, gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 13, 11, 0, NULL);
+        epd_wl_flush(s);
+        int wide_ok = converts > 0;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) wide_ok &= img[y * W + x] == 0xa00000u + y * W + x;
+        CHECK(wide_ok, "stride 16 * width: not read as it is");
+        epd_wl_done(s);
+        munmap(wm, (size_t)16 * W * H); close(gd);
         /* the pointer's memfd too: a short one gives no pointer and no crash */
         {
             epd_wl_set_cursor(s, cur_fn, NULL);
