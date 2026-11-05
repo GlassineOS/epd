@@ -174,10 +174,18 @@ epd_wl *epd_wl_open(const char *path, int w, int h, epd_wl_rect_fn fn, void *ctx
         free(s);
         return NULL;
     }
-    /* root:<panel group> 0660: sway runs as the desktop user, a member of it (as for the control FIFO);
-     * any other user can't connect. (A failed chown leaves the daemon's own group, still not world) */
-    if (s->gid != (gid_t)-1 && chown(sa.sun_path, (uid_t)-1, s->gid)) perror(sa.sun_path);
-    if (chmod(sa.sun_path, 0660)) perror(sa.sun_path);
+    /* <us>:<panel group> 0660: sway runs as the desktop user, a member of it (as for the control FIFO);
+     * any other user can't connect. No group, or no chown to it: 0600, the daemon's own user (and root)
+     * only, as the policy says: never 0660 on whatever group we happen to have */
+    int shared = 0;
+    if (s->gid == (gid_t)-1)
+        fprintf(stderr, "glassine-epdd-desktop: wl: no panel group (%s): %s is 0600\n", epd_group_name(), sa.sun_path);
+    else if (chown(sa.sun_path, (uid_t)-1, s->gid))
+        fprintf(stderr, "glassine-epdd-desktop: wl: chown %s to group %u: %s: it stays 0600\n", sa.sun_path, (unsigned)s->gid,
+                strerror(errno));
+    else
+        shared = 1;
+    if (chmod(sa.sun_path, shared ? 0660 : 0600)) perror(sa.sun_path);
     fprintf(stderr, "glassine-epdd-desktop: wl: listening on %s for %dx%d frames\n", sa.sun_path, w, h);
     return s;
 }

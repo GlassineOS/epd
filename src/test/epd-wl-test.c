@@ -232,6 +232,39 @@ int main(void)
     /* who may connect, and what may be mapped */
     {
         struct stat sb;
+        /* the panel group for this section: our own group, so the chown works whoever runs this */
+        struct group *own = getgrgid(getegid());
+        if (!own) { fprintf(stderr, "epd-wl-test: no group entry for gid %u\n", (unsigned)getegid()); return 1; }
+        char own_name[128];
+        snprintf(own_name, sizeof own_name, "%s", own->gr_name);
+        setenv("GLASSINE_EPD_GROUP", own_name, 1);
+        /* the socket's mode: 0660 in the panel group only if it got there; no group (empty, unknown) or a
+         * chown that fails (a group we're not in, if we aren't root): 0600, and the group is not widened */
+        {
+            const char *names[] = { "", "no-such-group-glassine" };
+            for (int k = 0; k < 2; k++) {
+                setenv("GLASSINE_EPD_GROUP", names[k], 1);
+                epd_wl *t = epd_wl_open(path, W, H, rect_fn, NULL);
+                CHECK(t && !stat(path, &sb) && (sb.st_mode & 07777) == 0600, "socket mode %o with group '%s' (want 600)",
+                      (unsigned)(sb.st_mode & 07777), names[k]);
+                epd_wl_close(t);
+            }
+            char probe[128];
+            snprintf(probe, sizeof probe, "%s.probe", path);
+            int pf = open(probe, O_CREAT | O_WRONLY, 0600);
+            int can = pf >= 0 && !fchown(pf, (uid_t)-1, 0);      /* root, or a member of group 0 */
+            if (pf >= 0) close(pf);
+            unlink(probe);
+            if (!can) {
+                setenv("GLASSINE_EPD_GROUP", "root", 1);
+                epd_wl *t = epd_wl_open(path, W, H, rect_fn, NULL);
+                CHECK(t && !stat(path, &sb) && (sb.st_mode & 07777) == 0600 && sb.st_gid != 0,
+                      "failed chown: mode %o gid %u (want 600, not 0)", (unsigned)(sb.st_mode & 07777), (unsigned)sb.st_gid);
+                epd_wl_close(t);
+            } else
+                printf("epd-wl-test: the failed-chown socket mode is not checked (this user may chown to group 0)\n");
+            setenv("GLASSINE_EPD_GROUP", own_name, 1);
+        }
         s = setup(path, 1, 1);
         CHECK(!stat(path, &sb) && (sb.st_mode & 07777) == 0660, "socket mode %o (want 660)", (unsigned)(sb.st_mode & 07777));
         /* the policy: root and the one user; the group's members; no one else */
