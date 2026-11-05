@@ -258,7 +258,7 @@ static const char *fd_refuse(int fd, size_t need)
     int seals = fcntl(fd, F_GET_SEALS);
     if (seals < 0) return "not a memfd (could be truncated while mapped)";
     if (!(seals & F_SEAL_SHRINK) && fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) < 0)
-        return "memfd that can't be sealed against shrinking (F_SEAL_SHRINK)";
+        return "file that can't be sealed against shrinking (F_SEAL_SHRINK): a memfd made without MFD_ALLOW_SEALING, or a shm_open file";
     if (fstat(fd, &st)) return "fstat failed";
     return st.st_size >= 0 && (unsigned long long)st.st_size >= need ? NULL : "file smaller than the buffer";
 }
