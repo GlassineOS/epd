@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bp4.h — stagger_ctl 4 (:
  * the two-tier ctl 3 on bit planes (variant m<M>is of test/epd-tier.h:
  * payback in the maintenance visit, the hammer floor at the arrival, the K

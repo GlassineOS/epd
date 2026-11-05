@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-brush: declarative pen-preview brushes
  * "Brushes"). The contract between sway (glassine_ink_v1 v3 brush objects ->
  * brush files), glassine-epdd-desktop (loads them, stamps them on the pen thread) and the

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-ingest — see epd-ingest.h */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE                     /* ('s pool: pthread_setaffinity_np) */

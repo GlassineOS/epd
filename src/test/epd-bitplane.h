@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bitplane.h — a bit-plane layout of the stagger's A2 drive pass, for
  * timing only (idea:, lesson 2).
  * Test code: included by epd-stagger-test.c alone, nothing in the daemon uses it.

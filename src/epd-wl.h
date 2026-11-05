@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-wl.h — glassine-epdd-desktop's Wayland frame source (*: the other end of sway's glassine-epd output
  * backend (glassine-epd-output-proto.h). Knows the socket and the buffers, not
  * the panel: each frame's damaged pixels go to a callback, which converts

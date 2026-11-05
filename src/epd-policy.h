@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-policy — the e-ink refresh policy of glassine-epdd-desktop as a pure state machine.
  *
  * No X, no /dev/ebc, no clock: glassine-epdd-desktop feeds events (a burst of changed

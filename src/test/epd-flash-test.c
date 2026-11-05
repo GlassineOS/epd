@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd_submit full = 2 (a flash of only the pixels that need one, e->stale):
  * static black UI is left alone (the shell bar took -2 DC frames at every
  * run-end flash), scrolled pixels are flashed, full = 1 drives all */

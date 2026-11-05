@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* glassine-epdd-desktop — e-ink refresh daemon for X11 on the Note Air 1.
  *
  * Two backends, same daemon: the stock 4.4 kernel's /dev/ebc (Onyx driver), or

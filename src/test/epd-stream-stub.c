@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-stream-stub — epd-drm.c's API without a panel, for host runs of the
  * whole glassine-epdd-desktop (the sway host test, ../../sway/host-test.sh EPDD=1): every
  * submitted update is logged ("SUBMIT id mode x,y wxh full") and copied into

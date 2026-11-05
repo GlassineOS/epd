@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gpu-test — the GPU drive frames (epd-gpu.c) against the CPU engine
  * (epd_render), word for word, and how long the GPU takes per frame. Runs on
  * the device (Adreno, surfaceless EGL); touches neither the panel nor X.

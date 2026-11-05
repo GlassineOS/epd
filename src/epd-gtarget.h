@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gtarget — stage 5: update targets made on the GPU.
  *
  * The producer (epd-ingest, glassine-epdd-desktop's main thread, its own EGL display)

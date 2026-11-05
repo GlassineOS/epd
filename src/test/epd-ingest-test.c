@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-ingest-test — the GPU ingest (epd-ingest.c) against the CPU
  * convert (glassine-epdd-desktop grey_of + wl_rect rotation), byte for byte. Needs a GPU
  * with a render node (host: any Mesa driver; skipped without one): a linear

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-jit.h - the stream thread's just-in-time render lead (epd-drm.c,
  * jit=on): frame k+1 is rendered starting rt_hi + JIT_MARGIN before frame k's
  * flip event, rt_hi = the recent worst render (+ copy) time.

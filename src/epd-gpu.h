@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gpu — the engine's drive frames rendered on the Adreno (step 5).
  *
  * epd_render_rows as a fragment shader: one fragment per wire word, 8 pixels

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-ingest-bench — : the CPU ingest's kernels
  * (epd-ingest-cpu.h), GL-free: no GPU, no dma-buf (malloc'd stand-ins at
  * wlroots 0006's pitches: R8 2048, XRGB 5632), so it runs on the host, under

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-dizzy.h - "dizzy" dithering (Liam Appelbe: liamappelbe.medium.com/
  * dizzy-dithering-2ae76dbceba1, gist c2c76ad1): error diffusion in a random
  * order, each pixel's error split equally over its 4 neighbours not yet done

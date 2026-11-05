@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* parity2: the live epd-policy against the FROZEN copy (test/ref, see its README),
  * over the whole pol_* API, with random traces under a set of eink.conf-like
  * profiles. Compares outputs only: actions (in order), C_*, STEP_*,

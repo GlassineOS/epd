@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-stagger-test — staggered cut steps (epd-stagger.h): what the CPU
  * reference does (the definition), then the GPU's pass against it bit for bit.
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-sched-bench — where the drive thread's CPU goes in a scroll
  * (host replay, no device). The real engine (epd-engine.c) at 24 C, a
  * Firefox-sized window scrolled: each update is the page shifted by `step`

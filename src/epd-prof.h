@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-prof.h - opt-in per-record timing tables (default off; ):
  * the drive thread's frame split (epd-drm.c, drive_prof=on) and the main
  * thread's update split (glassine-epdd-desktop.c, main_prof=on). A record is one loop

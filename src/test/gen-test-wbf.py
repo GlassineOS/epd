@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright GlassineOS contributors
 """gen-test-wbf.py OUT: a synthetic waveform file for the host tests.
 
 It has the layout epd_wbf_load / epd_wbf_frames read (epd-engine.c) and

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bp4i.h — epd-bp4.h's two-tier ctl 3 with the planes interleaved: the
  * same per-frame and visit logic, the state of a plane word together (its
  * cache lines) instead of 25 arrays. Test code, included by

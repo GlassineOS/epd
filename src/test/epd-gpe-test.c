@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gpe-test — the engine's per-pixel state on the GPU
  * (epd-gpu.c gpe) against the CPU engine. The CPU engine runs as always; its
  * pixel ops (epd_set_pixel_ops) also run the GPU's claim and finish passes on

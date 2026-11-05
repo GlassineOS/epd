@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-policy host tests:
  * 1. parity: the pre-refactor glassine-epdd-desktop decision code (transplanted below with
  * its X/ioctl calls stubbed into an action log) vs epd-policy, on random

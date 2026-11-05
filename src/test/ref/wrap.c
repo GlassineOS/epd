@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* the frozen policy (epd-policy.c/.h in this directory, verbatim) under ref_*
  * names, behind ref-api.h's plain types. Every external symbol of the frozen
  * file is renamed here so it links beside the live epd-policy.c. */

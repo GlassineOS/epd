@@ -61,4 +61,6 @@ waveform, and checks that no development-notebook references or waveform files a
 
 ## License
 
-GPL-2.0-or-later (`LICENSE`).
+GPL-2.0-or-later (`LICENSE`); every source file carries an `SPDX-License-Identifier` line.
+The two installed wire headers, `glassine-epd-proto.h` and `glassine-epd-output-proto.h`, are
+MIT, so that MIT-licensed clients can include them.

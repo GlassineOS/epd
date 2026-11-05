@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* glassine-epdd [-c CONFIG] [-s SOCKET]
  * The daemon that owns the e-ink panel, first for the recovery (*. Clients draw into a memfd and hand
  * their frames over with the glassine-epd frame protocol (glassine-epd-proto.h);

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* heap-shim.h: the cached dma-buf the probes run on (; tests only).
  * hs_alloc: /dev/dma_heap/system (the device: root) first, else a memfd turned into a
  * dma-buf by /dev/udmabuf (the host stand-in: a real dma-buf, DMA_BUF_IOCTL_SYNC and the

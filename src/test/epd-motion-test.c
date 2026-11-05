@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-motion: the shift finder on synthetic pages + the motion state on
  * touch/burst sequences (taps, scrolls, swipes, flings, content alone) */
 #include "../epd-motion.h"

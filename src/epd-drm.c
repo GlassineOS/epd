@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-drm — see epd-drm.h */
 #define _GNU_SOURCE             /* CPU affinity */
 #include <dirent.h>

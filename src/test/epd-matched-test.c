@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-matched-test — matched cuts (epd_set_matched) on a replayed scroll:
  * flings over a black/white text page, each step a cut A2 by speed (the
  * policy's steps 8/6/4), the next step submitted when the last is done

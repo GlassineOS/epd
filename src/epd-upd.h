@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-upd.h — : the update job's own helper pool.
  *
  * glassine-epdd-desktop's update job (scan, commit, the levels of a burst) runs as parts

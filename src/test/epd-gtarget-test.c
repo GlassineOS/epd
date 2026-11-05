@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gtarget-test — stage 5: update targets made on the GPU
  * (epd-ingest's shadow mirror + layers, epd-gpu's T copy) against the CPU,
  * byte for byte. Needs a GPU with a render node and libgbm (77 = skipped).

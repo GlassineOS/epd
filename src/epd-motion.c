@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-motion — see epd-motion.h */
 #include "epd-motion.h"
 #include <math.h>

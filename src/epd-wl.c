@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-wl.c — see epd-wl.h. The backend sends each buffer's fd once (BUF),
  * then per frame the buffer id and its damage (FRAME); we map every buffer
  * read-only and answer DONE (epd_wl_done) when the frame's pixels are no

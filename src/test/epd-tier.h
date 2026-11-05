@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-tier.h — ctl 3 split into a per-frame tier and a maintenance tier, with
  * op at fewer bits: a scalar per-pixel model scored against today's ctl 3
  * (the two-tier proposal). Test code, included by

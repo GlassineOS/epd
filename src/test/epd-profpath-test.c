@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-profpath-test: the path check and the open for files a control line names
  * (src/epd-profpath.h). A scratch directory stands in for EPD_PROF_DIR. Refused
  * paths must create and truncate nothing; an accepted one is created at 0640

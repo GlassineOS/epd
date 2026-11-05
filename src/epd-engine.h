@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-engine — the Note Air 1 e-ink software TCON in userspace (for the mainline
  * kernel, where no Onyx /dev/ebc driver exists).
  *
