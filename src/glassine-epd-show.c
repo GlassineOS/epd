@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* glassine-epd-show IMAGE.pgm [waveform_mode [BAR TEXT]]
  * Show an 8-bit binary PGM (P5) on the Note Air 1 e-ink panel via the stock kernel's
  * /dev/ebc interface. The sequence (our TWRP backend uses it too):

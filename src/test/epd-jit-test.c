@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-jit-test: the stream thread's JIT render lead (epd-jit.h) in a model of
  * its loop (epd-drm.c thread): frame k+1 renders from exp_evt - lead -
  * JIT_MARGIN (or at once), must finish by frame k's flip event (+0.7 ms, the

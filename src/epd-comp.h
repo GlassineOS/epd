@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-comp.h — glassine-epdd-desktop as the X compositing manager : the windows
  * composited on the CPU (default) or the GPU (opt-in). See epd-comp.c. */
 #ifndef EPD_COMP_H

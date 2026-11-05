@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-motion — is the screen moving, and how fast: ONE estimate for glassine-epdd-desktop's
  * paint policy (user, "a stone age finger touch screen check at the
  * front and complex statistics in the back" -> the motion detection one layer up).

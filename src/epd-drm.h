@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-drm — streams epd-engine drive frames to the Note Air 1 panel on the mainline
  * kernel (panel-onyx-na1-link: DSI command mode, one DRM page flip = one wire
  * frame, TC358762 + MAX17135 sequenced by the driver's enable/disable).

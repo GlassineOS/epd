@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-dizzy-test: the dithers side by side on a panel picture
  * epd-dizzy-test IN.pgm|- OUTDIR|- [reps]
  * IN: a 1872 x 1404 P5 (glassine-epdd-desktop's "shot": /tmp/glassine-shot-src.pgm; "-": a

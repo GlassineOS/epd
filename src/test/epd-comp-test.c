@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-comp-test.c — the compositor (epd-comp.c) against a per-pixel reference
  * on a known scene, on a real X server (Xvfb: run by epd-comp-test.sh).
  *

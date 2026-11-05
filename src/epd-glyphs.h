@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* 5x7 capitals for the status bars (glassine-epdd-desktop's SLEEPING, glassine-epd-show's
  * POWERED OFF, glassine-epdd's PRESS POWER TO WAKE): no font files needed, readable at any scale. */
 #ifndef EPD_GLYPHS_H

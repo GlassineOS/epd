@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-stagger — staggered cut steps: the CPU reference (epd-stagger.h) */
 #include <stdlib.h>
 #include <string.h>

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-dither.h - the ordered dither's thresholds (glassine-epdd-desktop's C_DITHER / C_Q4
  * commit, and its GPU twin in epd-ingest.c: both read this one table).
  * t[row & 63][col & 63], panel rows and columns; a grey g becomes white where

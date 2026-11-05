@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-comp.c — glassine-epdd-desktop as the X compositing manager.
  *
  * The first pipeline was built for the stock 4.4 kernel, which has

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* Copyright GlassineOS contributors */
 /* glassine-epd-proto.h — the glassine-epd frame protocol: a client (TWRP's
  * minuitwrp epd backend, later the compositor) <-> glassine-epdd, the daemon
  * that owns the e-ink panel.

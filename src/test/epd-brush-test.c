@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* host test of epd-brush.c (the pen-preview brush renderer; epd-brush.h).
  * epd-brush-test the checks
  * epd-brush-test bench + us per dab (8/16/32/64 px disc, 32 px mask, dither on) */

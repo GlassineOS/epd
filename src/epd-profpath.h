@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-profpath: where glassine-epdd-desktop (root) may write files a control
  * line names, and how it opens them.
  *

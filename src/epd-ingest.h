@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-ingest — , pass A: sway's frames (dma-bufs from a GLES sway,
  * turned into panel grey on the GPU.
  *

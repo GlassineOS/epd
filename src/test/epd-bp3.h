@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bp3.h — the stagger's A2 pass at ctl 3 (payrule, the panel's payback,
  * the K idle, the rail hammer) with the state as bit planes: the CPU twin of
  * (stage 2: these planes are the state). Test code, included by

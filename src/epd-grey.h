@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-grey — sway's XRGB8888 -> panel-order grey (the grey value q, then the
  * gamma LUT, rotated: portrait row py -> panel column pw-1-py, pixel x ->
  * panel row x), glassine-epdd-desktop's wl convert (40 % of its CPU in the

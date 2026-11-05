@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-engine — see epd-engine.h. The frame generator writes the panel's
  * drive frames. */
 

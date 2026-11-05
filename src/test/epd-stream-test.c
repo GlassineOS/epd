@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 #ifdef LIVE
 #define _GNU_SOURCE             /* (the extract: CPU affinity) */
 #endif

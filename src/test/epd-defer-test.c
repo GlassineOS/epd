@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-defer-test — , deferred claims (epd_set_defer): a deferred
  * engine against a synchronous one, CPU only. Both get the same submits (the
  * pacing from the synchronous one); every frame their drive frames (the wire

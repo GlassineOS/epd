@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* scan-commit-test — glassine-epdd-desktop's scan + commit (branch-free,
  * vectorized; extracted from glassine-epdd-desktop.c by extract-scan-commit.sh) against the
  * per-pixel reference they replaced (below, verbatim): boxes, "left" counts and

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gldebug.h: the GL's own words for an error (KHR_debug), in the current
  * context: the first errors go to stderr with the context's name and the
  * thread, so "GL error 0x502" names its call. Errors only, at most 20 a

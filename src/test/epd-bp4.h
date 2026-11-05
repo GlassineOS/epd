@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* test/epd-bp4.h — the gate of stagger_ctl 4's twin (../epd-bp4.h, the two-tier
  * ctl 3 on bit planes) against the tier model (epd-tier.h, variant
  * m<M>is) and, with STAG_BITPLANE shapes, of the GPU pass (epd-bp4g.h) against

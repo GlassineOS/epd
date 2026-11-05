@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-wl-test — the lazy frame path of epd-wl.c : with a damage
  * callback set, a frame's damage is reported at its arrival and its pixels are
  * converted only by epd_wl_flush / epd_wl_done; in runs glassine-epdd-desktop answers NEXT

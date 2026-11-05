@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* parity2's view of the FROZEN policy (test/ref/epd-policy.{c,h}: verbatim
  * copies at the last approved behaviour, see README.md; never edit them). Plain types only: this
  * header sees neither policy header, so the live and the frozen structs can

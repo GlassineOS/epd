@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-tpool-test — the update targets' pool (epd_target_alloc /
  * epd_target_free, epd-engine.c) changes nothing on the wire. A flood of
  * scroll steps (supersedes, non-blocking payback absorbs, the glassine-epdd-desktop payback

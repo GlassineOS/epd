@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* Copyright GlassineOS contributors */
 /* glassine-epd-output-proto.h — sway's glassine-epd output backend <-> glassine-epdd-desktop (*.
  *
  * The panel is a wlroots output. sway renders into shm buffers (pixman

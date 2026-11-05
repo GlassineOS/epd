@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bp4g.h — the two-tier ctl 3 (epd-bp4.h) on the GPU: the visit pass
  * (the cycle's rows y % M == cycle % M, before the frame) and the drive
  * pass. Test code, included by epd-stagger-test.c after epd-bp4.h, under

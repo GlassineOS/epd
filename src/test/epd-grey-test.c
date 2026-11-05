@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-grey-test — the grey value q (epd-grey.h): luma and luminance
  * the S table against the sRGB decode, epd_grey_isqrt exact, every colour's
  * luminance q against a double reference, fixed colours against the numpy

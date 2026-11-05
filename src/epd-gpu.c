@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-gpu — see epd-gpu.h */
 #include <poll.h>
 #include <stdio.h>

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-pack-test — part 2: the vectorized CPU halves of the engine hand-off
  * (epd_target_make) and the GPU state pack (epd_gpu_pack_state) against the
  * old per-pixel loops, on random state, plus their time per full panel. No GPU.

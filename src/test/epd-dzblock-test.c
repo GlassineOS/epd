@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-dzblock-test: the block dizzy (epd-dizzy.h epd_dizzy_block, the GPU's
  * form) against the layered and serial dizzy, blue noise and
  * Bayer, by numbers (no GPU, no python):

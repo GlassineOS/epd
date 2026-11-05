@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-bp3n.h — bp3_rows four plane words at a time (gcc vector extensions:
  * NEON on arm64), for the CPU timing of Same semantics as
  * bp3_rows, bit for bit: a group of four words takes the cold path when any

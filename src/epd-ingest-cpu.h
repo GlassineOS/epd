@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-ingest-cpu — : the CPU ingest's convert,
  * cheap. epd_ingest_frame_cpu (epd-ingest.c) reads sway's buffer through its
  * mapping; on the A509 device (Gold core, R8 full frame) that read cost 9.5 ms

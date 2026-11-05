@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright GlassineOS contributors
 # Host tests of the engine, the refresh policy and the daemons' helpers.
 # Most compare two code paths bit for bit (CPU vs GPU, banded vs serial, the
 # hand-off inbox vs a direct submit); GPU tests exit 77 without a render node

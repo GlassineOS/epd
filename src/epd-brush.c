@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-brush: declarative pen-preview brushes, the renderer (epd-brush.h is
  * the contract; "Brushes").
  *

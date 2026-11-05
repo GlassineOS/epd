@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-claim-bench — : the claim's pixel pass
  * (epd_claim_pixels) single-threaded vs a prototype that runs it in K row
  * bands on K threads, on realistic engine states, bit for bit. No production

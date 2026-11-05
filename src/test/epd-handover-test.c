@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-handover-test — the stagger -> engine hand-back against a panel
  * simulator: every drive frame the stagger (CPU reference) and then the
  * engine produce is integrated per pixel (phase 1 = one pulse toward black,

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* epd-policy — see epd-policy.h. Pure: no I/O, no clock, no X. */
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright GlassineOS contributors */
 /* a scroll from a still page with greys (after its GC16 cleanup): A2 has no
  * drive from grey, so those pixels go DU (~19 frames); that part must not
  * hold up the next step (device: ~220 ms per step for ~1 s), and
