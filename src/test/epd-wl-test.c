@@ -356,6 +356,30 @@ int main(void)
         CHECK(converts > 0, "a buffer sealed by the sender was refused");
         epd_wl_done(s);
         close(gd);
+        /* a refused re-send of a live id leaves no buffer for it: its frames are not read from the old one */
+        gd = memfd_create("epd-wl-test-resend", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, W * H * 4), "memfd");
+        sm.id = 11;
+        be_send(&sm, gd);
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 11, 8, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        converts = 0;
+        gd = memfd_create("epd-wl-test-resend-short", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, 4096), "memfd");
+        be_send(&sm, gd);                   /* id 11 again, refused (too short) */
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 11, 9, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D9") && converts == 0, "frame for an id whose re-send was refused: '%s', %d converts (want D9, 0)", a, converts);
         /* the pointer's memfd too: a short one gives no pointer and no crash */
         {
             epd_wl_set_cursor(s, cur_fn, NULL);

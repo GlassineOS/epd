@@ -264,12 +264,12 @@ static void on_buf(epd_wl *s, const struct glassine_epd_msg *m, int rfd, int dma
     }
     size_t len = (size_t)m->offset + (size_t)m->stride * m->height;
     const char *why = fd_refuse(rfd, len);
+    if (s->buf[i].live) drop_one(s, i);     /* (a refused re-send leaves no buffer for the id: not a stale one) */
     if (why) {
         fprintf(stderr, "glassine-epdd-desktop: wl: %s %u refused: %s\n", dma ? "dma-buf" : "buffer", m->id, why);
         close(rfd);
         return;
     }
-    if (s->buf[i].live) drop_one(s, i);
     s->buf[i].id = m->id; s->buf[i].w = m->width; s->buf[i].h = m->height; s->buf[i].stride = m->stride;
     s->buf[i].format = m->format; s->buf[i].offset = m->offset; s->buf[i].len = len;
     s->buf[i].live = 1;
