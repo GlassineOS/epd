@@ -14,7 +14,11 @@
  * memfd created with MFD_ALLOW_SEALING (F_SEAL_SHRINK is added by the daemon if
  * not already set, so the file can't shrink under its mapping) and at least
  * offset + stride * height bytes (2 * GLASSINE_EPD_CUR_SLOT for the cursor's):
- * anything else is refused, and its frames are answered DONE unread.
+ * anything else is refused, and its frames are answered DONE unread. (So a file
+ * from shm_open(), as wlroots' shm allocator makes them, or a memfd created without
+ * MFD_ALLOW_SEALING, is refused: they can't be sealed.) The seal is on the
+ * sender's own file: it must not ftruncate a buffer smaller after sending it
+ * (that fails with EPERM). A stride above 16 * width is refused.
  * glassine-epdd-desktop listens (it owns the panel and lives longer); the backend connects
  * and retries while none is listening. On (re)connect the backend sends BUF for
  * every live buffer, then a full FRAME. No consumer: frames are paced by a
