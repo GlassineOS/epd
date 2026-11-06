@@ -11,16 +11,25 @@
  * buffer's. Also: a backend without HELLO (NEXT falls back to DONE), and no
  * damage callback (the old eager path). The pointer : CURSOR_IMG /
  * CURSOR_POS into one callback per dispatch, the box and sprite turned
- * portrait the way the frames' rects are (both layouts). exit 0 = pass */
+ * portrait the way the frames' rects are (both layouts). Who may connect (the
+ * socket's mode, SO_PEERCRED: a refused peer leaves the connected backend alone)
+ * and which fds are mapped (an undersized memfd, one shrunk after BUF, an unsealable
+ * one, a regular file, a short cursor memfd: refused, the daemon goes on). exit 0 = pass */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <grp.h>
+#include <pwd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include "../epd-wl.h"
 #include "../glassine-epd-output-proto.h"
 
@@ -69,6 +78,27 @@ static void cur_fn(void *ctx, const epd_wl_cursor *c)
     curs++;
     cur = *c;
     if (c->on && c->r.w * c->r.h <= 16 * 16) memcpy(cur_px, c->px, (size_t)c->r.w * c->r.h * 4);
+}
+
+/* a getgrouplist that wants more room than the first try gives (its answer is -1 and the count it needs),
+ * lists need groups: the user's primary one first, then 7001 ... 7000 + need - 1. fail2: its second call fails */
+static int fake_calls, fake_need, fake_fail2;
+static int fake_groups(const char *user, gid_t pgid, gid_t *g, int *n)
+{
+    (void)user;
+    fake_calls++;
+    if (*n < fake_need) { *n = fake_need; return -1; }
+    if (fake_fail2 && fake_calls > 1) return -1;
+    for (int i = 0; i < fake_need; i++) g[i] = i ? (gid_t)(7000 + i) : pgid;
+    *n = fake_need;
+    return fake_need;
+}
+static int fake_has(gid_t want, int need, int fail2, int *calls)
+{
+    fake_calls = 0; fake_need = need; fake_fail2 = fail2;
+    int r = epd_wl_group_has(want, "nobody", 6999, fake_groups);
+    *calls = fake_calls;
+    return r;
 }
 
 static int be;                          /* the fake backend's socket */
@@ -127,7 +157,7 @@ static epd_wl *setup(const char *path, int hello, int lazy)
     /* hello 2: also LUM (the grey output by luminance) */
     if (hello) { struct glassine_epd_msg m = { .type = GLASSINE_EPD_HELLO, .seq = GLASSINE_EPD_CAP_NEXT | (hello == 2 ? GLASSINE_EPD_CAP_LUM : 0) }; be_send(&m, -1); }
     for (int b = 0; b < 3; b++) {
-        int fd = memfd_create("epd-wl-test", MFD_CLOEXEC);
+        int fd = memfd_create("epd-wl-test", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         if (fd < 0 || ftruncate(fd, W * H * 4)) { perror("memfd"); exit(1); }
         buf[b] = mmap(NULL, W * H * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         struct glassine_epd_msg m = { .type = GLASSINE_EPD_BUF, .id = b + 1, .width = W, .height = H, .stride = W * 4,
@@ -223,6 +253,280 @@ int main(void)
     CHECK(!strcmp(a, "D1"), "eager: next -> '%s' (want D1)", a);
     teardown(s);
 
+    /* who may connect, and what may be mapped */
+    {
+        struct stat sb;
+        /* the panel group for this section: our own group, so the chown works whoever runs this */
+        struct group *own = getgrgid(getegid());
+        if (!own) { fprintf(stderr, "epd-wl-test: no group entry for gid %u\n", (unsigned)getegid()); return 1; }
+        char own_name[128];
+        snprintf(own_name, sizeof own_name, "%s", own->gr_name);
+        setenv("GLASSINE_EPD_GROUP", own_name, 1);
+        /* the socket's mode: 0660 in the panel group only if it got there; no group (empty, unknown) or a
+         * chown that fails (a group we're not in, if we aren't root): 0600, and the group is not widened */
+        {
+            const char *names[] = { "", "no-such-group-glassine" };
+            for (int k = 0; k < 2; k++) {
+                setenv("GLASSINE_EPD_GROUP", names[k], 1);
+                epd_wl *t = epd_wl_open(path, W, H, rect_fn, NULL);
+                CHECK(t && !stat(path, &sb) && (sb.st_mode & 07777) == 0600, "socket mode %o with group '%s' (want 600)",
+                      (unsigned)(sb.st_mode & 07777), names[k]);
+                epd_wl_close(t);
+            }
+            char probe[128];
+            snprintf(probe, sizeof probe, "%s.probe", path);
+            int pf = open(probe, O_CREAT | O_WRONLY, 0600);
+            int can = pf >= 0 && !fchown(pf, (uid_t)-1, 0);      /* root, or a member of group 0 */
+            if (pf >= 0) close(pf);
+            unlink(probe);
+            if (!can) {
+                setenv("GLASSINE_EPD_GROUP", "root", 1);
+                epd_wl *t = epd_wl_open(path, W, H, rect_fn, NULL);
+                CHECK(t && !stat(path, &sb) && (sb.st_mode & 07777) == 0600 && sb.st_gid != 0,
+                      "failed chown: mode %o gid %u (want 600, not 0)", (unsigned)(sb.st_mode & 07777), (unsigned)sb.st_gid);
+                epd_wl_close(t);
+            } else
+                printf("epd-wl-test: the failed-chown socket mode is not checked (this user may chown to group 0)\n");
+            setenv("GLASSINE_EPD_GROUP", own_name, 1);
+        }
+        s = setup(path, 1, 1);
+        CHECK(!stat(path, &sb) && (sb.st_mode & 07777) == 0660, "socket mode %o (want 660)", (unsigned)(sb.st_mode & 07777));
+        /* the policy: root and the one user; the group's members; no one else */
+        uid_t nobody = 4000000000u;
+        epd_wl_set_peers(s, 1000, (gid_t)-1);
+        CHECK(epd_wl_peer_ok(s, 0, 0) && epd_wl_peer_ok(s, 1000, 1000) && !epd_wl_peer_ok(s, nobody, nobody) &&
+              !epd_wl_peer_ok(s, 1001, 1001), "peer policy without a group");
+        epd_wl_set_peers(s, (uid_t)-1, 4000000001u);
+        CHECK(epd_wl_peer_ok(s, 0, 0) && !epd_wl_peer_ok(s, 1000, 1000) && epd_wl_peer_ok(s, nobody, 4000000001u),
+              "peer policy with a group (primary gid)");
+        {                               /* a member by the group database, not by primary gid */
+            struct group *gr = getgrnam("root");
+            struct passwd *pw = getpwuid(getuid());
+            int member = 0;
+            if (gr && pw)
+                for (char **m = gr->gr_mem; *m; m++) member |= !strcmp(*m, pw->pw_name);
+            if (member) {
+                epd_wl_set_peers(s, (uid_t)-1, gr->gr_gid);
+                CHECK(epd_wl_peer_ok(s, getuid(), 4000000002u), "a supplementary member refused");
+            }
+        }
+        {                               /* the group scan: room for the first try, more room needed, a second call that fails */
+            int c1, c2, c3, c4;
+            int in_small = fake_has(7002, 3, 0, &c1), pg = fake_has(6999, 3, 0, &c1);
+            int in_big = fake_has(7039, 40, 0, &c2), no_big = fake_has(7040, 40, 0, &c2);
+            int in_fail = fake_has(7039, 40, 1, &c3), pg_fail = fake_has(6999, 40, 1, &c4);
+            CHECK(in_small && pg && c1 == 1, "group scan, a short list: found %d, primary %d, %d calls (want 1, 1, 1)", in_small, pg, c1);
+            CHECK(in_big && !no_big && c2 == 2, "group scan, a list past 32: found the last %d, an absent one %d, %d calls (want 1, 0, 2)",
+                  in_big, no_big, c2);
+            CHECK(!in_fail && !pg_fail && c3 == 2 && c4 == 2, "group scan, the second call failing: found %d / %d, %d calls (want 0, 0, 2)",
+                  in_fail, pg_fail, c3);
+        }
+        /* a second connection from a user not allowed: closed, the backend in place is not disturbed.
+         * root is always allowed, so then the peer is a child that has dropped to an unprivileged uid and gid
+         * (the socket's mode was checked above: opened up here, so that SO_PEERCRED alone decides) */
+        {
+            struct sockaddr_un sa = { .sun_family = AF_UNIX };
+            snprintf(sa.sun_path, sizeof sa.sun_path, "%s", path);
+            if (getuid() == 0) {
+                epd_wl_set_peers(s, (uid_t)-1, getegid());          /* (a group set, so getpwuid is asked too) */
+                CHECK(!chmod(path, 0666), "chmod");
+                int sync[2];
+                CHECK(!pipe(sync), "pipe");
+                pid_t kid = fork();
+                if (kid == 0) {
+                    alarm(10);
+                    if (setgroups(0, NULL) || setresgid(4000000001u, 4000000001u, 4000000001u) ||
+                        setresuid(4000000000u, 4000000000u, 4000000000u)) _exit(2);
+                    int c = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+                    if (c < 0 || connect(c, (struct sockaddr *)&sa, sizeof sa)) _exit(3);
+                    if (write(sync[1], "c", 1) != 1) _exit(5);
+                    char x;
+                    _exit(recv(c, &x, 1, 0) == 0 ? 0 : 4);          /* 0 bytes: the daemon closed it */
+                }
+                close(sync[1]);
+                char c;
+                CHECK(kid > 0 && read(sync[0], &c, 1) == 1, "the unprivileged peer did not connect");
+                close(sync[0]);
+                epd_wl_dispatch(s);                                 /* accept: refused */
+                int st = -1;
+                CHECK(kid > 0 && waitpid(kid, &st, 0) == kid && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+                      "the refused unprivileged connection: child status 0x%x (want exit 0: closed by the daemon)", st);
+                epd_wl_set_peers(s, 0, (gid_t)-1);
+            } else {
+                epd_wl_set_peers(s, getuid() + 1, (gid_t)-1);
+                int be2 = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+                CHECK(!connect(be2, (struct sockaddr *)&sa, sizeof sa), "second connect");
+                usleep(2000);
+                epd_wl_dispatch(s);
+                char x;
+                CHECK(recv(be2, &x, 1, MSG_DONTWAIT) == 0, "the refused connection was not closed");
+                close(be2);
+                epd_wl_set_peers(s, getuid(), (gid_t)-1);
+            }
+            paint(0, all, 0x700000);
+            frame(s, 1, 1, 0, NULL);
+            epd_wl_next(s);
+            answers(a, sizeof a);
+            CHECK(!strcmp(a, "N1") && dmgs == 1, "the first backend after a refused peer: '%s', damage %d (want N1, 1)", a, dmgs);
+        }
+        teardown(s);
+
+        /* an undersized memfd: the buffer is refused, a frame for it answered, nothing read (no SIGBUS) */
+        s = setup(path, 1, 1);
+        int sh = memfd_create("epd-wl-test-short", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(sh >= 0 && !ftruncate(sh, 4096), "memfd");
+        struct glassine_epd_msg sm = { .type = GLASSINE_EPD_BUF, .id = 4, .width = W, .height = H, .stride = W * 4, .format = 0x34325258u };
+        be_send(&sm, sh);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 4, 1, 0, NULL);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D1") && converts == 0 && dmgs == 0, "short memfd: '%s', %d converts, %d damage (want D1, 0, 0)", a, converts, dmgs);
+        /* the same through DMABUF, which maps lazily */
+        sm.type = GLASSINE_EPD_DMABUF; sm.id = 5;
+        be_send(&sm, sh);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 5, 2, 0, NULL);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D2") && converts == 0, "short memfd as DMABUF: '%s', %d converts (want D2, 0)", a, converts);
+        /* an offset that pushes a big enough file past its end */
+        int ok = memfd_create("epd-wl-test-off", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(ok >= 0 && !ftruncate(ok, W * H * 4), "memfd");
+        sm.type = GLASSINE_EPD_BUF; sm.id = 6; sm.offset = 64;
+        be_send(&sm, ok);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 6, 3, 0, NULL);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D3") && converts == 0, "offset past the end: '%s', %d converts (want D3, 0)", a, converts);
+        close(ok);
+        /* a memfd that allows no sealing, and a regular file: both could be truncated under the mapping */
+        int ns = memfd_create("epd-wl-test-nos", MFD_CLOEXEC);
+        CHECK(ns >= 0 && !ftruncate(ns, W * H * 4), "memfd");
+        sm.id = 7; sm.offset = 0;
+        be_send(&sm, ns);
+        FILE *tf = tmpfile();
+        CHECK(tf && !ftruncate(fileno(tf), W * H * 4), "tmpfile");
+        sm.id = 8;
+        be_send(&sm, fileno(tf));
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 7, 4, 0, NULL);
+        epd_wl_done(s);
+        frame(s, 8, 5, 0, NULL);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D4 D5") && converts == 0, "unsealable memfd / regular file: '%s', %d converts (want D4 D5, 0)", a, converts);
+        close(ns); fclose(tf);
+        /* a good buffer shrunk by its sender after BUF: it can't be (sealed), and the frame is read whole */
+        int gd = memfd_create("epd-wl-test-good", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, W * H * 4), "memfd");
+        uint32_t *gm = mmap(NULL, W * H * 4, PROT_READ | PROT_WRITE, MAP_SHARED, gd, 0);
+        for (int k = 0; k < W * H; k++) gm[k] = 0x900000u + k;
+        sm.id = 9;
+        be_send(&sm, gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        errno = 0;
+        CHECK(ftruncate(gd, 4096) < 0 && errno == EPERM, "a memfd handed over could be shrunk (errno %d)", errno);
+        frame(s, 9, 6, 0, NULL);
+        epd_wl_flush(s);
+        CHECK(converts > 0 && !memcmp(img, gm, sizeof img), "the sealed buffer was not read whole");
+        epd_wl_done(s);
+        munmap(gm, W * H * 4); close(gd);
+        /* a sender that sealed it already is as good */
+        gd = memfd_create("epd-wl-test-sealed", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, W * H * 4) && !fcntl(gd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL), "sealed memfd");
+        converts = 0;
+        sm.id = 10;
+        be_send(&sm, gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 10, 7, 0, NULL);
+        epd_wl_flush(s);
+        CHECK(converts > 0, "a buffer sealed by the sender was refused");
+        epd_wl_done(s);
+        close(gd);
+        /* a refused re-send of a live id leaves no buffer for it: its frames are not read from the old one */
+        gd = memfd_create("epd-wl-test-resend", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, W * H * 4), "memfd");
+        sm.id = 11;
+        be_send(&sm, gd);
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 11, 8, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        converts = 0;
+        gd = memfd_create("epd-wl-test-resend-short", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, 4096), "memfd");
+        be_send(&sm, gd);                   /* id 11 again, refused (too short) */
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 11, 9, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D9") && converts == 0, "frame for an id whose re-send was refused: '%s', %d converts (want D9, 0)", a, converts);
+        /* a stride of 2^31 or more: a sparse memfd of stride * height bytes passes the size check, but
+         * cpu_rects' int stride would go negative and read below the mapping. Refused; 16 * width still read */
+        gd = memfd_create("epd-wl-test-bigstride", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, (off_t)0x80000000u * H), "sparse memfd (%s)", strerror(errno));
+        struct glassine_epd_msg bs = sm;
+        bs.id = 12; bs.stride = 0x80000000u;
+        be_send(&bs, gd);
+        close(gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        converts = 0;
+        frame(s, 12, 10, 0, NULL);
+        epd_wl_flush(s);
+        epd_wl_done(s);
+        answers(a, sizeof a);
+        CHECK(!strcmp(a, "D10") && converts == 0, "stride 2^31: '%s', %d converts (want D10, 0)", a, converts);
+        gd = memfd_create("epd-wl-test-wide", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        CHECK(gd >= 0 && !ftruncate(gd, (off_t)16 * W * H), "memfd");
+        uint32_t *wm = mmap(NULL, (size_t)16 * W * H, PROT_READ | PROT_WRITE, MAP_SHARED, gd, 0);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) wm[(size_t)y * 16 * W / 4 + x] = 0xa00000u + y * W + x;
+        bs.id = 13; bs.stride = 16 * W;
+        be_send(&bs, gd);
+        usleep(2000);
+        epd_wl_dispatch(s);
+        frame(s, 13, 11, 0, NULL);
+        epd_wl_flush(s);
+        int wide_ok = converts > 0;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) wide_ok &= img[y * W + x] == 0xa00000u + y * W + x;
+        CHECK(wide_ok, "stride 16 * width: not read as it is");
+        epd_wl_done(s);
+        munmap(wm, (size_t)16 * W * H); close(gd);
+        /* the pointer's memfd too: a short one gives no pointer and no crash */
+        {
+            epd_wl_set_cursor(s, cur_fn, NULL);
+            int cf = memfd_create("epd-wl-test-curshort", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+            CHECK(cf >= 0 && !ftruncate(cf, 4096), "memfd");
+            struct glassine_epd_msg cmsg = { .type = GLASSINE_EPD_CURSOR_IMG, .width = 4, .height = 3, .stride = 16,
+                                             .format = GLASSINE_EPD_CUR_PORTRAIT, .rect = { { 1, 2, 0, 0 } } };
+            be_send(&cmsg, cf);
+            struct glassine_epd_msg cpos = { .type = GLASSINE_EPD_CURSOR_POS, .rect = { { 10, 20, 0, 0 } } };
+            be_send(&cpos, -1);
+            usleep(2000);
+            epd_wl_dispatch(s);
+            CHECK(!cur.on, "a short cursor memfd gave a pointer");
+            close(cf);
+        }
+        answers(a, sizeof a);
+        teardown(s);
+    }
+
     /* an R8 buffer in panel order (H x W, sway's grey output).
      * Its FRAME rects are panel rects; the damage callback gets them turned
      * back to portrait (panel col c, row r = portrait (r, H - 1 - c)), the
@@ -238,7 +542,7 @@ int main(void)
         usleep(2000);
         epd_wl_dispatch(g);
         int st = H + 8;                 /* a padded stride, as GBM's */
-        int fd = memfd_create("epd-wl-test-r8", MFD_CLOEXEC);
+        int fd = memfd_create("epd-wl-test-r8", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         if (fd < 0 || ftruncate(fd, st * W)) { perror("memfd"); exit(1); }
         uint8_t *gb = mmap(NULL, st * W, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         for (int y = 0; y < W; y++)
@@ -247,7 +551,7 @@ int main(void)
         be_send(&m, fd);
         close(fd);
         struct glassine_epd_msg bad = { .type = GLASSINE_EPD_BUF, .id = 10, .width = W, .height = H, .stride = W, .format = 0x20203852u };
-        int fd2 = memfd_create("epd-wl-test-bad", MFD_CLOEXEC);
+        int fd2 = memfd_create("epd-wl-test-bad", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         if (fd2 < 0 || ftruncate(fd2, W * H)) { perror("memfd"); exit(1); }
         be_send(&bad, fd2);                 /* R8 in portrait size: refused */
         close(fd2);
@@ -274,7 +578,7 @@ int main(void)
     {
         s = setup(path, 1, 1);
         epd_wl_set_cursor(s, cur_fn, NULL);
-        int fd = memfd_create("epd-wl-test-cur", MFD_CLOEXEC);
+        int fd = memfd_create("epd-wl-test-cur", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         if (fd < 0 || ftruncate(fd, 2 * GLASSINE_EPD_CUR_SLOT)) { perror("memfd"); exit(1); }
         uint8_t *cm = mmap(NULL, 2 * GLASSINE_EPD_CUR_SLOT, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         uint32_t *s1 = (uint32_t *)(cm + GLASSINE_EPD_CUR_SLOT), *s0 = (uint32_t *)cm;
@@ -310,7 +614,7 @@ int main(void)
         usleep(2000);
         epd_wl_dispatch(s);
         /* the R8 buffer for the comparison frame */
-        int gfd = memfd_create("epd-wl-test-r8c", MFD_CLOEXEC);
+        int gfd = memfd_create("epd-wl-test-r8c", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         if (gfd < 0 || ftruncate(gfd, H * W)) { perror("memfd"); exit(1); }
         struct glassine_epd_msg gm = { .type = GLASSINE_EPD_BUF, .id = 7, .width = H, .height = W, .stride = H, .format = 0x20203852u };
         be_send(&gm, gfd);

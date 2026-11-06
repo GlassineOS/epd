@@ -41,11 +41,13 @@ Other components depend on these names; changing one is a coordinated change.
 | Name | Used by |
 |---|---|
 | `/dev/socket/glassine-epd` (default) | the recovery UI (frame protocol) |
-| `/run/glassine-epdd-desktop.ctl` | control FIFO of the desktop daemon (settings, shell, tests); root:video 0660, so its writers must be in group `video` |
+| `/run/glassine-epd.sock` | sway's glassine-epd output backend (`src/glassine-epd-output-proto.h`); root:video 0660 (the panel group; 0600 if there is no such group or the chown to it fails), and only root, the daemon's own user or a member of that group is accepted (SO_PEERCRED; "member" by the group database: the peer's primary group, or a group listing its user, since SO_PEERCRED carries no supplementary groups). Buffer and cursor memfds must be sealable against shrinking (`F_SEAL_SHRINK`, added by the daemon if the sender allowed sealing) and at least as large as the buffer, or the buffer is refused |
+| `/run/glassine-epdd-desktop.ctl` | control FIFO of the desktop daemon (settings, shell, tests); root:video 0660 (the panel group), so its writers must be in it |
 | `/run/glassine-epdd-desktop.levels`, `.classes`, `-frames.csv` | status files of the desktop daemon |
-| `/run/glassine-epdd-prof/` | the only place a control line (`main_prof_csv=`, `drive_prof_csv=`) may write to, and where `shot`, `dcmap` and `srccheck` put their PGMs: root-owned, 0750 group video, files 0640. A path outside it is refused |
+| `/run/glassine-epdd-prof/` | the only place a control line (`main_prof_csv=`, `drive_prof_csv=`) may write to, and where `shot`, `dcmap` and `srccheck` put their PGMs: root-owned, 0750 the panel group, files 0640. A path outside it is refused |
 | `/etc/glassine/eink.conf` | per-application refresh profiles |
 | `/etc/glassine/epd.conf` | the device adapter |
+| `GLASSINE_EPD_GROUP` | the panel group named in the rows above (default `video`): the group of the socket, the control FIFO, the profile directory and `eink.conf`, and the members the socket accepts. Empty or unknown: root only (`src/epd-group.h`) |
 | `GLASSINE_*` environment variables | tuning switches of the desktop daemon and the tests |
 
 ## Building and testing

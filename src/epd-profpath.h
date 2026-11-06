@@ -58,7 +58,7 @@ static inline int epd_prof_dir_make(const char *dir, gid_t gid)
 {
     if (mkdir(dir, 0750) && errno != EEXIST) return -1;
     if (epd_prof_dir_ok(dir) && gid != (gid_t)-1) {
-        if (chown(dir, (uid_t)-1, gid) == 0) chmod(dir, 02750);     /* (group video reads what the daemon writes) */
+        if (chown(dir, (uid_t)-1, gid) == 0) chmod(dir, 02750);     /* (the panel group, epd-group.h, reads what the daemon writes) */
     }
     if (epd_prof_dir_ok(dir)) return 0;
     errno = EPERM;

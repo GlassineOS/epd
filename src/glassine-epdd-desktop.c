@@ -151,7 +151,7 @@
  * drive_prof_csv=PATH|off ... plus one CSV row per iteration into PATH (and
  * PATH.freq: the 20 Hz cpufreq samples); implies on. PATH must be a file
  * name in /run/glassine-epdd-prof (the daemon creates it; root's, 0750,
- * group video; epd-profpath.h): any other path is refused, and the file is
+ * the panel group, video by default; epd-profpath.h): any other path is refused, and the file is
  * created at 0640. The path must not contain another command's word (stats,
  * sleep, state, heal, mark, wake, ...): e.g. /run/glassine-epdd-prof/dprof.csv
  * main_prof=on|off the main thread's split per burst (snap/ingest, scan,
@@ -533,6 +533,7 @@
 #include "epd-dizzy.h"
 #include "epd-brush.h"
 #include "epd-profpath.h"
+#include "epd-group.h"
 #ifdef EPD_GPU
 extern int epd_gpu_stag_timer;         /* epd-gpu.c: the stagger's timer queries */
 extern double epd_gpu_stag_ms[3];
@@ -736,13 +737,6 @@ static void prof_token(char *d, size_t n, const char *v)
     size_t k = 0;
     while (v[k] && v[k] != ' ' && v[k] != '\t' && v[k] != '\n' && k + 1 < n) { d[k] = v[k]; k++; }
     d[k] = 0;
-}
-
-/* the group "video" (eink.conf, the control FIFO and EPD_PROF_DIR belong to it); 0 = none */
-static gid_t video_gid(void)
-{
-    struct group *g = getgrnam("video");
-    return g ? g->gr_gid : 0;
 }
 
 /* a file the daemon names itself (shot, dcmap, srccheck): in EPD_PROF_DIR, 0640,
@@ -3263,7 +3257,7 @@ static int load_profiles(void)
 {
     struct stat st;
     if (stat(PROF_CONF, &st) < 0) {
-        /* first run: defaults, editable by the desktop user (group video) */
+        /* first run: defaults, editable by the desktop user (the panel group, epd-group.h) */
         mkdir("/etc/glassine", 0755);
         FILE *f = fopen(PROF_CONF, "w");
         if (f) {
@@ -3272,7 +3266,7 @@ static int load_profiles(void)
                   "xournalpp mode=auto touch=auto ink=on\n"
                   "luajit mode=auto touch=auto ink=off\n"
                   "* mode=auto touch=fast ink=off\n", f);
-            fchown(fileno(f), 0, getgrnam("video") ? getgrnam("video")->gr_gid : 0);
+            fchown(fileno(f), 0, epd_group(0));
             fchmod(fileno(f), 0664);
             fclose(f);
         }
@@ -5153,12 +5147,12 @@ int main(int argc, char **argv)
     parts = XFixesCreateRegion(dpy, NULL, 0);
     }
 
-    /* root:video 0660: the desktop user's "Refresh screen" launcher and sway write it as
-     * members of group video (like eink.conf); any other user can't. Made 0600 first so it
-     * is never open wider than that; an older image's 0666 FIFO is narrowed too. No group
-     * video: root only */
+    /* root:<panel group> 0660 (video: epd-group.h): the desktop user's "Refresh screen" launcher
+     * and sway write it as members of that group (like eink.conf); any other user can't. Made 0600 first so it
+     * is never open wider than that; an older image's 0666 FIFO is narrowed too. No such
+     * group: root only */
     {
-        gid_t vg = video_gid();
+        gid_t vg = epd_group(0);           /* (GLASSINE_EPD_GROUP, default video: epd-group.h) */
         mkfifo(CTL, 0600);
         if (chown(CTL, (uid_t)-1, vg)) perror(CTL);
         chmod(CTL, 0660);

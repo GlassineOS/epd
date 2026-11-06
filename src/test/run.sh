@@ -38,6 +38,10 @@ $B/epd-motion-test
 c -o $B/epd-profpath-test epd-profpath-test.c
 $B/epd-profpath-test
 
+# the group of the FIFO, the profile directory, eink.conf and the socket: named once
+c -o $B/epd-group-test epd-group-test.c
+$B/epd-group-test
+
 # the engine on the CPU
 if real epd-matched; then  # the matched-cut model's settling and DC figures
     c -o $B/epd-matched-test ../epd-engine.c epd-matched-test.c
