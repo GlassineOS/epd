@@ -30,7 +30,10 @@ package fetches it from the device at runtime (`waveform` in the adapter config)
 
 The daemons read everything about the device from an adapter config shipped by the
 device package (`/etc/glassine/epd.conf`: panel size, rotation, waveform path,
-temperature and frontlight files; see the head of `src/glassine-epdd.c`). The engine
+temperature and frontlight files; see the head of `src/glassine-epdd.c`). All three
+programs take the waveform from its `waveform=` line; `glassine-epdd-desktop` and
+`glassine-epd-show` let `GLASSINE_EPDD_WBF` override it and fall back to
+`/waveform/eink_waveform.wbf` without either (`src/epd-waveform.h`). The engine
 itself is still built for one panel geometry (1872 × 1404, `src/epd-engine.h`); making
 that a runtime setting is open work.
 

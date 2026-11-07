@@ -13,13 +13,13 @@ all: glassine-epdd glassine-epd-show glassine-epdd-desktop
 glassine-epdd: $(S)/glassine-epdd.c $(S)/epd-engine.c $(S)/epd-drm.c
 	$(CC) -static $(CFLAGS) $(WARN) $(DRM_CFLAGS) -o $@ $^ -lm -lpthread
 
-glassine-epd-show: $(S)/glassine-epd-show.c $(S)/epd-engine.c $(S)/epd-drm.c
-	$(CC) -static $(CFLAGS) $(WARN) $(DRM_CFLAGS) -o $@ $^ -lm -lpthread
+glassine-epd-show: $(S)/glassine-epd-show.c $(S)/epd-engine.c $(S)/epd-drm.c $(S)/epd-waveform.h
+	$(CC) -static $(CFLAGS) $(WARN) $(DRM_CFLAGS) -o $@ $(filter %.c,$^) -lm -lpthread
 
 DESKTOP_SRC = $(S)/glassine-epdd-desktop.c $(S)/epd-wl.c $(S)/epd-ingest.c $(S)/epd-policy.c \
 	$(S)/epd-motion.c $(S)/epd-engine.c $(S)/epd-drm.c $(S)/epd-gpu.c $(S)/epd-stagger.c \
 	$(S)/epd-comp.c $(S)/epd-brush.c
-glassine-epdd-desktop: $(DESKTOP_SRC)
+glassine-epdd-desktop: $(DESKTOP_SRC) $(S)/epd-waveform.h
 	$(CC) $(CFLAGS) -fvect-cost-model=cheap -Wall -DEPD_GPU $(DRM_CFLAGS) -o $@ $(DESKTOP_SRC) \
 		-lX11 -lXext -lXdamage -lXfixes -lXi -lXcomposite -lEGL -lm -lpthread -ldrm
 

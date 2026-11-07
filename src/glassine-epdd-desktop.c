@@ -521,6 +521,7 @@
 #include "epd-policy.h"
 #include "epd-motion.h"
 #include "epd-drm.h"
+#include "epd-waveform.h"
 #include "epd-upd.h"
 #include "epd-stagger.h"
 #include "epd-comp.h"
@@ -594,7 +595,6 @@ static int dizzy_form_layered = 0;              /* dizzy_form=block|layered: the
 static int eng_keepalive_ms = 2000; /* keepalive=N: link + rails stay up N ms after input */
 static int boost_ms;                /* boost=N: CPU clocks up to N ms after input, see boost_set */
 static int boost_run;               /* boost_run=on: the boost lasts while a motion run does, see boost_tick */
-#define ENG_WBF "/waveform/eink_waveform.wbf"
 #define ENG_LEVELS "/run/glassine-epdd-desktop.levels"
 static volatile sig_atomic_t quit_sig;
 static int ink_mode = 1;            /* 0 off, 1 the ink areas (sway: the ink=on apps' visible windows) */
@@ -5069,7 +5069,8 @@ int main(int argc, char **argv)
         /* mainline: the userspace engine. hv=1: the panel driver raises the
          * MAX17135 rails for each burst of frames (GLASSINE_EPDD_HV=0: dry run) */
         const char *hv = getenv("GLASSINE_EPDD_HV");
-        const char *wbf = getenv("GLASSINE_EPDD_WBF");
+        char wbf[256];
+        epd_waveform_path(EPD_ADAPTER_CONF, wbf, sizeof wbf);   /* (env, epd.conf, old path) */
         const char *gpu = getenv("GLASSINE_EPDD_GPU");
         epd_stream_gpu = !gpu ? 0 : !strcmp(gpu, "check") ? 2 : !strcmp(gpu, "pad") ? 3 : atoi(gpu);
         const char *gpe = getenv("GLASSINE_EPDD_GPE");
@@ -5086,7 +5087,7 @@ int main(int argc, char **argv)
             }
         }
         claim_state_conf();             /* (eink.conf's @claim_state=: before the engine opens) */
-        eng = epd_stream_open(wbf ? wbf : ENG_WBF, battery_celsius(), hv ? atoi(hv) : 1);
+        eng = epd_stream_open(wbf, battery_celsius(), hv ? atoi(hv) : 1);
         if (!eng) { fprintf(stderr, "glassine-epdd-desktop: no /dev/ebc and no engine\n"); return 1; }
         pol.has_engine = 1;             /* motion=adaptive: WF_DU4, A2 cuts */
         /* the engine knobs set before it existed (GLASSINE_EPDD) */
