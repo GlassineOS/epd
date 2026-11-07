@@ -13,8 +13,8 @@
  * epd-glyphs.h) across the bottom of the picture as seen, like glassine-epdd-desktop's
  * SLEEPING bar; glassine-splash's shutdown screen says POWERED OFF with it.
  * Mainline kernel (no /dev/ebc): the same picture through glassine-epdd-desktop's userspace
- * engine (epd-engine.c + epd-drm.c): an INIT flash to white, then a full update
- * in the given mode; the panel levels are left in /run/glassine-epdd-desktop.levels. It
+ * engine (epd-engine.c + epd-drm.c; the waveform as epd-waveform.h finds it): an INIT
+ * flash to white, then a full update in the given mode; the panel levels are left in /run/glassine-epdd-desktop.levels. It
  * must finish before glassine-epdd-desktop opens the panel (glassine-x starts after glassine-splash). */
 #include <errno.h>
 #include <fcntl.h>
@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include "epd-engine.h"
 #include "epd-drm.h"
+#include "epd-waveform.h"
 #include "epd-glyphs.h"
 
 #define EBC_SEND_UPDATE 0x700c
@@ -105,7 +106,8 @@ static uint8_t px(const uint8_t *img, int portrait, int ccw, int x, int y)
 static int show_engine(const uint8_t *img, int portrait, int ccw, int mode)
 {
     const char *hv = getenv("GLASSINE_EPDD_HV");
-    epd_stream *s = epd_stream_open("/waveform/eink_waveform.wbf", battery_celsius(), hv ? atoi(hv) : 1);
+    char wbf[256];
+    epd_stream *s = epd_stream_open(epd_waveform_path(EPD_ADAPTER_CONF, wbf, sizeof wbf), battery_celsius(), hv ? atoi(hv) : 1);
     if (!s) { fprintf(stderr, "glassine-epd-show: no /dev/ebc and no engine\n"); return 1; }
     uint8_t *g = malloc((size_t)W * H);
     if (!g) return 1;
