@@ -39,7 +39,7 @@ c -o $B/epd-profpath-test epd-profpath-test.c
 $B/epd-profpath-test
 
 # the waveform path of the desktop daemon and the splash: environment, epd.conf, old path
-c -o $B/epd-waveform-test epd-waveform-test.c
+c -DEPD_WAVEFORM_DEFAULT="\"$B/default.wbf\"" -o $B/epd-waveform-test epd-waveform-test.c
 $B/epd-waveform-test
 
 # the group of the FIFO, the profile directory, eink.conf and the socket: named once

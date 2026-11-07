@@ -7,7 +7,10 @@
  * glassine-epd-show use the same key through this header, in this order:
  *   1. GLASSINE_EPDD_WBF in the environment (tests, bring-up);
  *   2. waveform= in the adapter file;
- *   3. EPD_WAVEFORM_DEFAULT, the path older images put the file at.
+ *   3. EPD_WAVEFORM_DEFAULT, the path older images put the file at; also when
+ *      the adapter names a file that can't be read but this one can (a device
+ *      seed that failed on an image that still has the file: the panel keeps
+ *      working, the health check still reports the missing seed).
  * The adapter line is parsed like glassine-epdd's: "key=value", "#" starts a
  * comment, trailing blanks and the line end are dropped; the last waveform=
  * wins. An empty value counts as not set.
@@ -20,9 +23,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define EPD_ADAPTER_CONF "/etc/glassine/epd.conf"
+#ifndef EPD_WAVEFORM_DEFAULT          /* (a test build names a scratch file) */
 #define EPD_WAVEFORM_DEFAULT "/waveform/eink_waveform.wbf"
+#endif
 
 /* waveform= from the adapter file `conf` into out (n bytes). 1 if found and
  * not empty, 0 otherwise (no file, no key, empty value, too long for out). */
@@ -52,7 +58,10 @@ static inline const char *epd_waveform_path(const char *conf, char *out, size_t 
 {
     const char *e = getenv("GLASSINE_EPDD_WBF");
     if (e && *e && strlen(e) < n) { memcpy(out, e, strlen(e) + 1); return out; }
-    if (epd_adapter_waveform(conf, out, n)) return out;
+    if (epd_adapter_waveform(conf, out, n)) {
+        if (!access(out, R_OK) || access(EPD_WAVEFORM_DEFAULT, R_OK)) return out;
+        fprintf(stderr, "epd: no waveform at %s (%s), using %s\n", out, conf, EPD_WAVEFORM_DEFAULT);
+    }
     snprintf(out, n, "%s", EPD_WAVEFORM_DEFAULT);
     return out;
 }
