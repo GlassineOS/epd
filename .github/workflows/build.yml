@@ -25,6 +25,6 @@ jobs:
           set -e
           # (the kernel's panel driver is still named panel-onyx-n*1-link)
           if git grep -n -i -w -E 'l[a]b|n[a]1|s1[0-9][0-9][a-z]?' -- . ':!LICENSE' | grep -v -E 'panel[-_]onyx[-_]n[a]1[-_]link'; then exit 1; fi
-          git grep -n -E 'P[h]ase [0-9]|§|docs/p[h]ases' -- . ':!.github/workflows/build.yml' && exit 1
+          git grep -n -E 'P[h]ase [0-9]|§|docs/p[h]ases' -- . ':!.github/workflows/build.yml' ':!.claude/skills' ':!.specify' && exit 1
           git ls-files | grep -i -E '\.(wbf|bin)$' && exit 1
           echo clean

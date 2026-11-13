@@ -1,0 +1,31 @@
+schema_version: "1.0"
+
+preset:
+  id: "glassine"
+  name: "GlassineOS"
+  version: "0.2.0"
+  description: "GlassineOS organization constitution and spec template (principles, safety, hardware acceptance)"
+  author: "GlassineOS"
+  repository: "https://github.com/GlassineOS/.github"
+  license: "CC-BY-SA-4.0"
+
+requires:
+  speckit_version: ">=1.1.0"
+
+provides:
+  templates:
+    - type: "template"
+      name: "constitution-template"
+      file: "templates/constitution-template.md"
+      description: "Organization principles + a section for repository-specific rules"
+      replaces: "constitution-template"
+
+    - type: "template"
+      name: "spec-template"
+      file: "templates/spec-template.md"
+      description: "Spec with interface contracts, device scope and hardware acceptance"
+      replaces: "spec-template"
+
+tags:
+  - "glassine"
+  - "organization"
