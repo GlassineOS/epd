@@ -393,9 +393,9 @@
  * stagger_warm=on|off the next run's state work done once the panel rests
  * (the engine idle after its last update): its start then
  * finds nothing to resolve. Default on
- * stagger_entry=first|engine first: a scroll's first cut step goes to the
- * warm stagger, which starts at once (no engine cut, no
- * wait for it). engine: the engine does the first cut (default)
+ * stagger_entry=first|engine first (default): a scroll's first cut step goes
+ * to the warm stagger, which starts at once (no engine cut,
+ * no wait for it). engine: the engine does the first cut
  * hammer_top=N the rail hammer (stagger_pay=panel): an arrival at black /
  * white with a partial history (from a grey, or a reversal:
  * the model short of the whole drive) gets N frames (0..7)

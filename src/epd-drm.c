@@ -187,12 +187,15 @@ int epd_stream_stag_linger = 250;
  * engine reads a finished word's level from T either way, so nothing it
  * sees changes. Any engine update makes it cold again */
 int epd_stream_stag_warm = 1;
-/* stagger_entry=first: a scroll's first cut step goes to a warm stagger
- * (lanes, the engine idle, stag_warm done) instead of to the engine, so the
- * run starts at once: no engine cut, no wait for its frames to end with
- * the next cuts held meanwhile. engine (0, the default): the engine does the
- * first cut, the stagger takes the next ones once the engine is idle */
-int epd_stream_stag_entry = 0;
+/* stagger_entry=first (1, the default): a scroll's first cut step goes to a
+ * warm stagger (lanes, the engine idle, stag_warm done) instead of to the
+ * engine, so the run starts at once: no engine cut, no wait for its frames
+ * to end with the next cuts held meanwhile (17 frames, ~200 ms, for a
+ * full-window cut). Not warm (the engine busy, ctl 3 runs): the engine as
+ * below. engine (0): the engine does the first cut, the stagger takes the
+ * next ones once the engine is idle (this was for an entry that cost
+ * ~100 ms; it is a few ms when warm) */
+int epd_stream_stag_entry = 1;
 enum { STG_OFF, STG_ON, STG_DRAIN };
 #define STG_HOLD 8                  /* held rects (more: they go to the engine) */
 #define STG_PQ 16                   /* lanes: armed rects waiting for the next upload (more: merged) */
