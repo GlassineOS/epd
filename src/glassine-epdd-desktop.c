@@ -390,6 +390,12 @@
  * decides on every panel frame, a pulse a frame, an idle
  * after K) instead of G 2. Default off, next run
  * stagger_linger=MS it stays on MS after the targets last changed (default 250)
+ * stagger_warm=on|off the next run's state work done once the panel rests
+ * (the engine idle after its last update): its start then
+ * finds nothing to resolve. Default on
+ * stagger_entry=first|engine first: a scroll's first cut step goes to the
+ * warm stagger, which starts at once (no engine cut, no
+ * wait for it). engine: the engine does the first cut (default)
  * hammer_top=N the rail hammer (stagger_pay=panel): an arrival at black /
  * white with a partial history (from a grey, or a reversal:
  * the model short of the whole drive) gets N frames (0..7)
@@ -990,6 +996,8 @@ static void apply_cmd(const char *cmd)
     }
     if ((v = strstr(cmd, "stagger_cap="))) epd_stream_stag_cap = atoi(v + 12) < 0 ? -1 : atoi(v + 12);
     if ((v = strstr(cmd, "stagger_linger="))) epd_stream_stag_linger = atoi(v + 15);
+    if ((v = strstr(cmd, "stagger_warm="))) epd_stream_stag_warm = strncmp(v + 13, "off", 3) != 0;
+    if ((v = strstr(cmd, "stagger_entry="))) epd_stream_stag_entry = !strncmp(v + 14, "first", 5);
     if (strstr(cmd, "gpu_hang_test=1")) {
         epd_stream_gpu_hang_test = 1;
         fprintf(stderr, "glassine-epdd-desktop: gpu_hang_test: the next GPU frame is taken as hung (abandon, then the revive)\n");
@@ -5503,6 +5511,10 @@ int main(int argc, char **argv)
                             es.stag_exits ? es.stag_exit_read_ms_sum / es.stag_exits : 0,
                             (unsigned long long)es.stag_subs, (unsigned long long)es.stag_held, (unsigned long long)es.stag_flushed,
                             (unsigned long long)es.stag_end_quiet, (unsigned long long)es.stag_end_other, (unsigned long long)es.stag_frames, AVG(stag, stag_frames), AVG(stag_sub, stag_frames));
+                if (es.stag_warms || es.stag_first)
+                    fprintf(stderr, "glassine-epdd-desktop: stagger warm: %llu warms (avg %.2f max %.2f ms, %llu finished pixels resolved), %llu runs started by their first cut (stagger_entry=%s)\n",
+                            (unsigned long long)es.stag_warms, AVG(stag_warm, stag_warms), (unsigned long long)es.stag_warm_px,
+                            (unsigned long long)es.stag_first, epd_stream_stag_entry ? "first" : "engine");
                 if (es.stag_lane_arms)          /* (stagger_state=lanes) */
                     fprintf(stderr, "glassine-epdd-desktop: stagger lanes: %llu arms (%llu without a D clean, %llu FIN words on armed rows, %llu on the pool), acks %.1f frames after an evict on avg, %llu waited out; syncs %.3f ms a frame (%s)\n",
                             (unsigned long long)es.stag_lane_arms, (unsigned long long)es.stag_lane_dskip, (unsigned long long)es.stag_lane_finarmed, (unsigned long long)es.stag_lane_par, es.stag_exits ? (double)es.stag_lane_ack_frames / es.stag_exits : 0,

@@ -179,6 +179,20 @@ int epd_stream_stag_a21;
 /* the stagger stays on this long after the targets last changed (ms): an app
  * draws every few panel frames, a scroll's frames come 30-100 ms apart */
 int epd_stream_stag_linger = 250;
+/* stagger_warm: the entry's state work done while the panel rests. Once the
+ * engine is idle after its last update (a page's cleanup settled), the
+ * finished words over the whole panel are resolved (D's level := T's, W
+ * idle) and D's written lines cleaned for the GPU, as lane_take would do at
+ * the next run's start; that start then finds nothing to resolve. The
+ * engine reads a finished word's level from T either way, so nothing it
+ * sees changes. Any engine update makes it cold again */
+int epd_stream_stag_warm = 1;
+/* stagger_entry=first: a scroll's first cut step goes to a warm stagger
+ * (lanes, the engine idle, stag_warm done) instead of to the engine, so the
+ * run starts at once: no engine cut, no wait for its frames to end with
+ * the next cuts held meanwhile. engine (0, the default): the engine does the
+ * first cut, the stagger takes the next ones once the engine is idle */
+int epd_stream_stag_entry = 0;
 enum { STG_OFF, STG_ON, STG_DRAIN };
 #define STG_HOLD 8                  /* held rects (more: they go to the engine) */
 #define STG_PQ 16                   /* lanes: armed rects waiting for the next upload (more: merged) */
@@ -404,6 +418,7 @@ struct epd_stream {
         uint32_t f0;            /* C.f at the run's entry (the self-check's early frames) */
         epd_stag_par fp;        /* this frame's parameters, taken under the lock at the upload */
         int lctl;               /* the last run's ctl (into or out of 4: the lanes re-parked) */
+        int warm;               /* stag_warm done, no engine update since */
         int c4warn;             /* "stagger_ctl 4 not available" said */
         /* stagger=check at ctl 4: C4 the twin (epd-bp4.h; its acks in C.ack),
          * M4 its masks (layout m4k), dsh the D it evicts (0xffffffff: not
@@ -2945,6 +2960,64 @@ static int lane_acked(epd_stream *s)
     return !epd_stag_lane_unacked(&s->e, s->stg.S.ack, b);
 }
 
+/* stag_warm's two passes on the render pool: the rows holding a finished
+ * word (read only), then their resolve, each part its own rows and its own D
+ * clean (W's rows are marked once in between: a part's resolve only reads
+ * wy0/wy1 then) */
+static struct { int pass, fy0[NREND], fy1[NREND]; long n[NREND]; } warm_j;
+static void warm_job(epd_stream *s, int i)
+{
+    epd_engine *e = &s->e;
+    epd_pk *k = e->pk;
+    int y0 = EPD_H * i / s->jn, y1 = EPD_H * (i + 1) / s->jn;
+    if (warm_j.pass == 0) {
+        int a = EPD_H, b = 0;
+        for (int y = y0; y < y1; y++) {
+            const uint16_t *w = k->W + (size_t)y * EPD_PK_S;
+            int has = 0;
+            for (int x = 0; x < EPD_W && !has; x++) has = w[x] == EPD_PK_FIN;
+            if (has) { if (y < a) a = y; b = y + 1; }
+        }
+        warm_j.fy0[i] = a; warm_j.fy1[i] = b;
+        return;
+    }
+    warm_j.n[i] = 0;
+    int a = warm_j.fy0[i], b = warm_j.fy1[i];
+    if (b <= a) return;
+    warm_j.n[i] = epd_stag_lane_resolve(e, (epd_rect){ 0, a, EPD_W, b - a });
+    if (warm_j.n[i] > 0) ln_sync(k->dfd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE, ((epd_rect){ 0, a, EPD_W, b - a }), EPD_PK_S * 4);
+}
+
+/* under the lock, the engine idle, no run, nothing held: see
+ * epd_stream_stag_warm */
+static void stag_warm(epd_stream *s)
+{
+    double t0 = now();
+    epd_engine *e = &s->e;
+    pk_quiet(s);
+    warm_j.pass = 0;
+    pool_run(s, warm_job);
+    int a = EPD_H, b = 0;
+    for (int i = 0; i < s->jn; i++)
+        if (warm_j.fy1[i] > warm_j.fy0[i]) {
+            if (warm_j.fy0[i] < a) a = warm_j.fy0[i];
+            if (warm_j.fy1[i] > b) b = warm_j.fy1[i];
+        }
+    long n = 0;
+    if (b > a) {
+        epd_pk_w_rows(e, a, b);
+        warm_j.pass = 1;
+        pool_run(s, warm_job);
+        for (int i = 0; i < s->jn; i++) n += warm_j.n[i];
+        epd_pk_w_sync(e);
+    }
+    s->stg.warm = 1;
+    s->st.stag_warms++;
+    s->st.stag_warm_px += (uint64_t)n;
+    acc(&s->st.stag_warm_ms_sum, &s->st.stag_warm_ms_max, (now() - t0) * 1e3);
+    if (epd_stream_verbose) fprintf(stderr, "epd: stagger warm: %ld finished pixels resolved (%.2f ms)\n", n, (now() - t0) * 1e3);
+}
+
 /* under the lock (a submitter): a cut step's target t over r into the
  * stagger (its id; t freed), or 0: the engine takes it. While armed (the
  * stagger waits for the engine to get idle) cut steps are held; anything
@@ -2970,9 +3043,13 @@ static uint32_t stag_take(epd_stream *s, epd_rect r, int mode, int full, uint8_t
          * idle. An arm older than the linger is a new scroll's first cut again */
         double tn = now();
         if (!s->stg.arm || (!s->stg.nhr && tn - s->stg.arm_t > epd_stream_stag_linger / 1e3)) {
+            /* stagger_entry=first: a warm stagger takes it (held below; the
+             * loop's top enters at once, the engine being idle) */
+            int first = epd_stream_stag_entry && s->stg.warm && s->stg.lanes && s->stg.gl > 0 && !s->e.nrun && !s->e.npend;
             s->stg.arm = 1;
             s->stg.arm_t = tn;
-            return 0;
+            if (!first) return 0;
+            s->st.stag_first++;
         }
         if (!s->stg.hold && !(s->stg.hold = malloc((size_t)EPD_W * EPD_H))) return 0;
         int k = 0;
@@ -3349,21 +3426,36 @@ static void stag_gpu_load(epd_stream *s, epd_rect r, const char *what)
                    epd_gpu_stag_load_err(s->gpu), ex, ey, s->stg.X.cold[o], s->stg.S.cold[o]);
 }
 
+/* the stream thread: the stagger's state and GPU programs, once (0, or -1:
+ * the engine does the steps). At the stream's start, so that no run's first
+ * frame waits for an allocation or a shader compile; stag_enter calls it
+ * again for a stream whose GPU came later */
+static int stag_open(epd_stream *s)
+{
+    if (s->stg.gl) return s->stg.gl > 0 ? 0 : -1;
+    if (!s->gpu) return -1;
+    double t0 = now();
+    if (epd_stag_init(&s->stg.S) || epd_gpu_stag_open(s->gpu)) {
+        fprintf(stderr, "epd: staggered steps not available (GLES 3.1 / memory): the engine does the steps\n");
+        s->stg.gl = -1;
+        return -1;
+    }
+    s->stg.gl = 1;
+    s->stg.glok = 1;
+    s->stg.lanes = epd_gpu_stag_lanes(s->gpu);
+    if (s->stg.lanes) fprintf(stderr, "epd: staggered steps: stagger_state=lanes (the A2 pass on the engine's D and T)\n");
+    if (s->stg.lanes && epd_stream_stag_ctl == 4) epd_gpu_bp4_open(s->gpu);     /* (stag_enter decides whether ctl 4 runs) */
+    fprintf(stderr, "epd: staggered steps ready (%.1f ms)\n", (now() - t0) * 1e3);
+    return 0;
+}
+
 /* the stream thread, under the lock, the engine idle: its state into the stagger */
 static void stag_enter(epd_stream *s)
 {
     double t0 = now();
-    if (!s->stg.gl) {
-        if (epd_stag_init(&s->stg.S) || epd_gpu_stag_open(s->gpu)) {
-            fprintf(stderr, "epd: staggered steps not available (GLES 3.1 / memory): the engine does the steps\n");
-            s->stg.gl = -1;
-            stag_hold_flush(s);
-            return;
-        }
-        s->stg.gl = 1;
-        s->stg.glok = 1;
-        s->stg.lanes = epd_gpu_stag_lanes(s->gpu);
-        if (s->stg.lanes) fprintf(stderr, "epd: staggered steps: stagger_state=lanes (the A2 pass on the engine's D and T)\n");
+    if (stag_open(s)) {
+        stag_hold_flush(s);
+        return;
     }
     int pcap = epd_stream_stag_cap < 0 ? s->e.matched_cap : epd_stream_stag_cap;
     /* .dither 0: the stagger dithers nothing : the commit owns the
@@ -4054,6 +4146,9 @@ static void *thread(void *arg)
         if (s->gpu_lost && !ready && !pending) gpu_revive(s);
         gt_service(s);
         if (s->stg.arm && (!s->gpu || s->gpe || s->stg.gl < 0 || !epd_stream_stagger || s->quit)) stag_hold_flush(s);
+        if (!s->stg.gl && s->gpu && epd_stream_stagger && !s->e.nrun && !s->e.npend) stag_open(s);   /* (before any run) */
+        if (s->e.nrun || s->e.npend || s->stg.state != STG_OFF) s->stg.warm = 0;
+        else if (epd_stream_stag_warm && !s->stg.warm && s->stg.gl > 0 && s->stg.lanes && !s->stg.nhr && s->e.pk) stag_warm(s);
         if (s->stg.state == STG_OFF && s->stg.arm && s->stg.nhr && !s->e.nrun && !s->e.npend) {
             stag_enter(s);
             if (PF(s) && s->stg.state != STG_OFF && !s->stg.lanes) s->dp->ev |= EV_ENTER;   /* (lanes: no crossing) */

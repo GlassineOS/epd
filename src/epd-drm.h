@@ -75,10 +75,12 @@ typedef struct {
     /* stagger_state=lanes : rects armed, frames from the
      * evicts to their acks (summed over the runs), evicts taken over without
      * all acks, the runs' dma-buf sync time (ms, summed) */
+    uint64_t stag_warms, stag_warm_px, stag_first;
     uint64_t stag_lane_arms, stag_lane_ack_frames, stag_lane_ack_late, stag_lane_dskip, stag_lane_finarmed, stag_lane_par;
     /* ... run ends' evicts / takeovers on the pool, the evicts' time (ms) */
     uint64_t stag_lane_xpar, stag_evicts;
     double stag_lane_sync_ms_sum, stag_evict_ms_sum, stag_evict_ms_max;
+    double stag_warm_ms_sum, stag_warm_ms_max;
     double stag_enter_ms_sum, stag_enter_ms_max, stag_exit_ms_sum, stag_exit_ms_max, stag_ms_sum, stag_ms_max, stag_sub_ms_sum, stag_sub_ms_max,
            stag_enter_cpu_ms_sum, stag_exit_read_ms_sum;
     /* the engine's (epd-engine.h) */
@@ -179,6 +181,8 @@ extern int epd_stream_stag_check;      /* stagger=check: see epd-drm.c */
 extern int epd_stream_stag_direct;     /* stagger_direct=: see epd-drm.c */
 extern int epd_stream_stagger, epd_stream_stag_ctl, epd_stream_stag_pay, epd_stream_stag_linger, epd_stream_stag_k, epd_stream_stag_sidle;
 extern int epd_stream_stag_payrule, epd_stream_stag_cap;
+extern int epd_stream_stag_warm;                        /* stagger_warm=on|off: see epd-drm.c (stag_warm) */
+extern int epd_stream_stag_entry;                       /* stagger_entry=first|engine: see epd-drm.c (stag_take) */
 extern int epd_stream_stag_stripe;                      /* stagger_stripe= */
 extern int epd_stream_stag_blocks;                      /* stagger_stripe=blocks */
 extern int epd_stream_stag_cellw, epd_stream_stag_cellh;   /* stagger_stripe=cells[W[xH]] */
