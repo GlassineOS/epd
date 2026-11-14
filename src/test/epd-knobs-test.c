@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "../epd-knobs-ctl.h"
 
 /* the owners not linked here (the engine and the stagger are) */
@@ -195,9 +197,12 @@ static const char *const noise[] = { "stats", "verbose", "a2=on", "idle_ms=250",
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: epd-knobs-test WBF [NAMES]\n"); return 2; }
-    FILE *err = stderr;
-    stderr = fopen("/dev/null", "w");          /* (both parsers' notes: the same lines) */
-    if (!stderr) stderr = err;
+    /* both parsers' notes (the same lines) to /dev/null: fd 2, as stderr
+     * may not be assigned (musl) */
+    fflush(stderr);
+    int err = dup(2), nul = open("/dev/null", O_WRONLY);
+    if (err >= 0 && nul >= 0) dup2(nul, 2);
+    if (nul >= 0) close(nul);
     static int fake;
     epd_stream *open_s = (epd_stream *)&fake;
     /* 1a. every name with every value, alone and between other commands */
@@ -272,6 +277,8 @@ int main(int argc, char **argv)
         }
         unsetenv(ek[i].env);
     }
+    fflush(stderr);                             /* (stderr back: epd_init's and a bad WBF's notes show) */
+    if (err >= 0) { dup2(err, 2); close(err); }
     /* 4b. epd_init: the env once, a knob already set kept */
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 2; }
@@ -299,7 +306,6 @@ int main(int argc, char **argv)
     epd_stream_jit = 1; epd_stream_inbox = 0; epd_stream_stag_k = 8;
     epd_knobs_line(epd_ctl_knobs, NK, b, sizeof b);
     if (!strstr(b, "jit=on") || !strstr(b, "handoff=lock") || !strstr(b, "stagger_k=8")) FAIL("stats line: %s", b);
-    stderr = err;
     if (fails) { printf("epd-knobs: %d failures\n", fails); return 1; }
     printf("epd-knobs: ok (%d control names, %ld lines equal to the old parser, %d engine env rules, %d names without a clash)\n",
            named, lines, nenv, nn);
