@@ -17,6 +17,7 @@ track of what the panel shows.
 | `src/epd-ingest.c`, `src/epd-wl.c`, `src/epd-comp.c` | frame ingest: from the Wayland compositor's e-ink output backend, or as the X compositing manager |
 | `src/epd-brush.c` | pen preview brushes |
 | `src/epd-knobs.h`, `src/epd-knobs-ctl.h` | the one list of the engine's, drive's, GPU's and ingest's runtime knobs (their globals, first values, control names, `GLASSINE_*` variables) and the daemon's parser over it |
+| `src/epd-adapter.h` | the device adapter (`/etc/glassine/epd.conf`): its parser and defaults, the temperature reader, the pen and touch names; `conf/epd.conf.onyx-noteair` is the Note Air's |
 | `src/glassine-epdd.c` | **glassine-epdd**: the recovery's panel daemon (CPU engine, static, no GPU) |
 | `src/glassine-epdd-desktop.c` | **glassine-epdd-desktop**: the desktop session's panel daemon (GPU engine) |
 | `src/glassine-epd-show.c` | **glassine-epd-show**: shows a PGM on the panel (boot splash) |
@@ -29,14 +30,17 @@ package fetches it from the device at runtime (`waveform` in the adapter config)
 
 ## Device adapter
 
-The daemons read everything about the device from an adapter config shipped by the
-device package (`/etc/glassine/epd.conf`: panel size, rotation, waveform path,
-temperature and frontlight files; see the head of `src/glassine-epdd.c`). All three
-programs take the waveform from its `waveform=` line; `glassine-epdd-desktop` and
-`glassine-epd-show` let `GLASSINE_EPDD_WBF` override it and fall back to
-`/waveform/eink_waveform.wbf` without either (`src/epd-waveform.h`). The engine
-itself is still built for one panel geometry (1872 × 1404, `src/epd-engine.h`); making
-that a runtime setting is open work.
+The programs read what they know about the device from an adapter config shipped by
+the device package (`/etc/glassine/epd.conf`), all through one parser,
+`src/epd-adapter.h`, whose head lists the keys: panel size, rotation, waveform path,
+temperature files and their scale, frontlight files, the asleep bar's text, and the pen
+digitizer's and touchscreen's evdev names (`pen=NAME [invert]`, `touch=NAME`). A key
+the file leaves out keeps its default, the Note Air's; `conf/epd.conf.onyx-noteair`
+writes every key out and is the sample for another device. `glassine-epdd-desktop`
+and `glassine-epd-show` let `GLASSINE_EPDD_WBF` override the waveform and run on the
+defaults without the file; `glassine-epdd` needs the file. The engine itself is still
+built for one panel geometry (1872 × 1404, `src/epd-engine.h`); making that a runtime
+setting is open work.
 
 ## Runtime interfaces
 

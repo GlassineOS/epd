@@ -15,7 +15,7 @@
  * full GC16 full-screen grey ramp, erase (render cost worst case)
  * a2 A2 (EPD_A2_OR_DU) squares with a warm link, then erased: latency
  * hv=0 is a dry run: the rails stay off and nothing on the panel changes.
- * celsius: default = battery temperature (the MAX17135 has no thermistor).
+ * celsius: default = the device adapter's temperature (epd-adapter.h).
  *
  * Built with -DEPD_HOST (test/run.sh) the stream runs against epd-drm.c's
  * fake DRM device (a pipe + an 85 Hz timer: see epd-drm.c "host harness") and
@@ -45,10 +45,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include <time.h>
 #include <unistd.h>
 #include "../epd-drm.h"
+#include "../epd-adapter.h"
 
 static uint8_t grey[EPD_W * EPD_H];
 
@@ -659,22 +659,14 @@ static int stagger_suite(const char *wbf)
 #endif
 #endif
 
-static int battery_celsius(void)
+/* the temperature as the daemons read it: the device adapter's (epd-adapter.h) */
+static int adapter_celsius(void)
 {
-    DIR *d = opendir("/sys/class/power_supply");
-    struct dirent *de;
-    int c = 24;
-    while (d && (de = readdir(d))) {
-        char p[320], b[32];
-        if (!strstr(de->d_name, "bat")) continue;
-        snprintf(p, sizeof p, "/sys/class/power_supply/%s/temp", de->d_name);
-        FILE *f = fopen(p, "r");
-        if (!f) continue;
-        if (fgets(b, sizeof b, f)) { c = atoi(b) / 10; fprintf(stderr, "temperature %d C from %s\n", c, de->d_name); }
-        fclose(f);
-        break;
-    }
-    if (d) closedir(d);
+    epd_adapter ad;
+    const char *from;
+    epd_adapter_load(&ad, EPD_ADAPTER_CONF);
+    int c = epd_adapter_celsius(&ad, &from);
+    fprintf(stderr, "temperature %d C from %s\n", c, from ? from : "nowhere (the default)");
     return c;
 }
 
@@ -701,7 +693,7 @@ int main(int argc, char **argv)
 #endif
 #endif
     int hv = atoi(argv[2]);
-    int c = argc > 4 && atoi(argv[4]) ? atoi(argv[4]) : battery_celsius();
+    int c = argc > 4 && atoi(argv[4]) ? atoi(argv[4]) : adapter_celsius();
     int hold = argc > 5 ? atoi(argv[5]) : 2;
     epd_stream_verbose = 1;
     epd_stream *s = epd_stream_open(argv[1], c, hv);

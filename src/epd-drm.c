@@ -4779,7 +4779,7 @@ static void log_temp_range(epd_stream *s, int c)
     o = NULL;
     int du = epd_wbf_frames(w, EPD_DU, t, &o);
     free(o);
-    fprintf(stderr, "epd: waveform range %d..%d C (battery %d C): GC16 %d frames, DU %d\n",
+    fprintf(stderr, "epd: waveform range %d..%d C (at %d C): GC16 %d frames, DU %d\n",
             w->ranges[t], w->ranges[t + 1], c, gc, du);
 }
 
