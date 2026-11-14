@@ -54,9 +54,10 @@ if $CC -o "$V/x" "$V/x.c" $xlibs 2>/dev/null; then
     echo "epd-stream-stub: the desktop daemon links on it"
 else echo "epd-stream-stub: skipped (no X11 / EGL to link the daemon)"; fi
 
-# the waveform path of the desktop daemon and the splash: environment, epd.conf, old path
-c -o $B/epd-waveform-test epd-waveform-test.c
-$B/epd-waveform-test
+# the device adapter (epd.conf) all the programs read: the waveform path, glassine-epdd's old
+# parser, the old battery reader, pen and touch names, the sample conf
+c -o $B/epd-adapter-test epd-adapter-test.c
+$B/epd-adapter-test ../../conf/epd.conf.onyx-noteair
 
 # the group of the FIFO, the profile directory, eink.conf and the socket: named once
 c -o $B/epd-group-test epd-group-test.c

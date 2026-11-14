@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The panel programs' device adapter (/etc/glassine/epd.conf) for the Onyx Boox
+# Note Air, every key written out: the sample for another device's. The device
+# package installs the Note Air's own copy, which may leave out a key whose
+# default (src/epd-adapter.h) is the same. key=value, "#" starts a comment.
+panel_width=1872
+panel_height=1404
+rotation=ccw
+# the panel's waveform: the device seed's copy (glassine-device-seed, in glassine-deploy)
+waveform=/run/glassine/device/waveform.wbf
+# the panel temperature: the battery's, in tenths of a degree (no sensor at the panel)
+temperature=/sys/class/power_supply/qcom-battery/temp
+temperature=/sys/class/power_supply/battery/temp
+temperature_scale=10
+# the frontlight's two channels (warm and cold)
+frontlight=/sys/class/backlight/frontlight-a/brightness
+frontlight=/sys/class/backlight/frontlight-b/brightness
+sleep_text=PRESS POWER TO WAKE
+# the Wacom digitizer over i2c-hid (its evdev name holds the HID id); its axes
+# are the panel's turned 180 degrees
+pen=2D1F:012B invert
+# the cyttsp5 touchscreen (cyttsp5_mt)
+touch=cyttsp5

@@ -202,8 +202,8 @@
  * reexec exec /usr/sbin/glassine-epdd-desktop again (same PID: updates without
  * ending the desktop session)
  * temp=N|auto mainline engine: waveform temperature N C (A/B tests: the
- * battery is not the panel, e.g. warm while charging) /
- * the battery's again; from the next update
+ * adapter's source is not the panel, e.g. the battery warm while
+ * charging) / the adapter's again; from the next update
  * dry=on|off mainline engine: link without the panel's high voltage (the
  * panel does not change; timing diagnosis) / normal. Live from
  * the next link up, no reexec (so also after a GPU hang); env
@@ -527,7 +527,7 @@
 #include "epd-policy.h"
 #include "epd-motion.h"
 #include "epd-drm.h"
-#include "epd-waveform.h"
+#include "epd-adapter.h"
 #include "epd-upd.h"
 #include "epd-stagger.h"
 #include "epd-comp.h"
@@ -570,7 +570,8 @@ static int ebc = -1, verbose;
  * ebuf in RAM, copied to a grey buffer per update) */
 static epd_stream *eng;
 static int64_t eng_temp_ms;
-static int temp_override = -100;     /* "temp=N": waveform temperature in C; -100 = the battery's */
+static int temp_override = -100;     /* "temp=N": waveform temperature in C; -100 = the adapter's */
+static epd_adapter adapter;             /* /etc/glassine/epd.conf (epd-adapter.h), read at start */
 static int ingest_mode = 1;         /* ingest=cpu|gpu|check (0/1/2), see wl_dma_frame */
 static int ingest_wait = 1;         /* ingwait=on|off: wait for the buffer's producer on the CPU first (the split) */
 static int ingest_view = 1;         /* ingest_view=on|off: read sway's tagged R8 frames in place (ingest=cpu; no copy) */
@@ -1016,21 +1017,6 @@ static int64_t now_ms(void)
 #define TW ((PH + TILE - 1) / TILE)
 #define TH ((PW + TILE - 1) / TILE)
 static box tilebox[TW * TH];
-/* battery temperature (the MAX17135 on the Note Air 1 has no thermistor)
- * in C, or 24 */
-static int battery_celsius(void)
-{
-    static const char *p[] = { "/sys/class/power_supply/qcom-battery/temp", "/sys/class/power_supply/battery/temp" };
-    for (unsigned i = 0; i < sizeof p / sizeof *p; i++) {
-        FILE *f = fopen(p[i], "r");
-        char b[32];
-        if (!f) continue;
-        int ok = fgets(b, sizeof b, f) != NULL;
-        fclose(f);
-        if (ok) return atoi(b) / 10;
-    }
-    return 24;
-}
 
 /* where an update's time goes before the engine (the "stats" command): the
  * read (compositor or X), scan + commit into the shadow, the hand-off */
@@ -1203,7 +1189,7 @@ static void eng_update(const struct onyx_epdc_update *u)
     double t0 = tsec();
     if (now_ms() - eng_temp_ms > 60000) {           /* waveforms change per ~3 C */
         eng_temp_ms = now_ms();
-        epd_stream_set_temp(eng, temp_override > -100 ? temp_override : battery_celsius());
+        epd_stream_set_temp(eng, temp_override > -100 ? temp_override : epd_adapter_celsius(&adapter, NULL));
     }
     int mode = u->waveform_mode == WF_DU4 ? EPD_DU4 : u->waveform_mode != WF_DU ? EPD_GC16 :
                eng_a2 || send_a2len ? EPD_MODE_A2LEN(EPD_A2_OR_DU, send_a2len) : EPD_DU;
@@ -2966,11 +2952,12 @@ static inkbh *bh_get(const char *id)
  * not know the app's brush (preview = black, width from pressure). No preview
  * for the eraser tool or with a side button held.
  * Pen devices: every evdev whose name starts with "Glassine Pen" (glassine-penfix's, stock
- * kernel), or the mainline i2c-hid Wacom node with pressure ("... 2D1F:012B ..."). */
+ * kernel), or the adapter's digitizer (epd.conf pen=; on the Note Air the mainline
+ * i2c-hid Wacom node), only its node with pressure. */
 #define MAXPEN 4
 static struct pen {
     int fd, minx, maxx, miny, maxy, maxp;
-    int flip;                              /* mainline i2c-hid: axes turned 180 degrees */
+    int flip;                              /* the adapter's pen= ... invert: axes turned 180 degrees */
     int x, y, p, touch, tool_pen, rubber, btn;
     int tx, ty, has_tilt;                  /* ABS_TILT_X/Y (raw) */
     int tmin[2], tmax[2], tres[2];         /* their absinfo */
@@ -3007,20 +2994,22 @@ static void pen_scan(void)
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
         ioctl(fd, EVIOCGNAME(sizeof name), name);
-        /* stock: glassine-penfix's "Glassine Pen"; mainline: the Wacom digitizer via
-         * i2c-hid ("... 2D1F:012B ..."), only its node with pressure */
+        /* stock: glassine-penfix's "Glassine Pen"; mainline: the adapter's digitizer
+         * (pen=), only its node with pressure */
         unsigned long absb[(ABS_MAX + 1 + 8 * sizeof(long) - 1) / (8 * sizeof(long))] = { 0 };
         ioctl(fd, EVIOCGBIT(EV_ABS, sizeof absb), absb);
         int has_p = (absb[ABS_PRESSURE / (8 * sizeof(long))] >> (ABS_PRESSURE % (8 * sizeof(long)))) & 1;
-        if (strncmp(name, "Glassine Pen", 12) && !(strstr(name, "2D1F:012B") && has_p)) { close(fd); continue; }
+        int inv, ad_pen = epd_adapter_pen(&adapter, name, &inv);
+        if (strncmp(name, "Glassine Pen", 12) && !(ad_pen && has_p)) { close(fd); continue; }
         struct pen *p = &pens[npens++];
         memset(p, 0, sizeof *p);
         struct input_absinfo a;
         p->fd = fd;
         p->sx = -1;
-        /* the mainline Wacom node reports the stock axes turned 180 degrees
-         * (top-left tap = raw X~560/Y~15170; X matrix 0 -1 1 1 0 0) */
-        p->flip = strstr(name, "2D1F:012B") != NULL;
+        /* pen=... invert: the node reports the panel's axes turned 180 degrees
+         * (the Note Air's mainline Wacom node: top-left tap = raw X~560/Y~15170;
+         * X matrix 0 -1 1 1 0 0) */
+        p->flip = ad_pen && inv;
         ioctl(fd, EVIOCGABS(ABS_X), &a); p->minx = a.minimum; p->maxx = a.maximum;
         ioctl(fd, EVIOCGABS(ABS_Y), &a); p->miny = a.minimum; p->maxy = a.maximum;
         ioctl(fd, EVIOCGABS(ABS_PRESSURE), &a); p->maxp = a.maximum > 0 ? a.maximum : 1;
@@ -3579,7 +3568,7 @@ static const profile *wl_profile_at(int x, int y, box *win)
     return &defprof;
 }
 
-/* finger on the touchscreen (cyttsp5_mt): its reports go to the motion estimate
+/* finger on the touchscreen (the adapter's, epd.conf touch=): its reports go to the motion estimate
  * (epd-motion, one layer for "is the screen moving"; replaced the
  * TOUCH_MOVE gate, 37 px of travel before a burst counted as a gesture). The
  * "touch" profile applies to GESTURES only (epd-motion: the finger moved
@@ -3608,7 +3597,7 @@ static int touch_xmax = 1, touch_ymax = 1;
  * by <= 4/3 */
 static int touch_slot, tv_nx = -1, tv_ny = -1;
 /* the touchscreen: "Glassine Touch" (glassine-touchd's clone; the raw device is grabbed by
- * it and silent) if it exists, else the raw "cyttsp5_mt". touch_recheck opens
+ * it and silent) if it exists, else the raw one the adapter names (touch=). touch_recheck opens
  * it again when it went away or the clone appeared later. */
 static int touch_is_clone;
 static int64_t touch_checked;
@@ -3626,7 +3615,7 @@ static void touch_open(void)
         if (fd < 0) continue;
         ioctl(fd, EVIOCGNAME(sizeof name), name);
         int is_clone = !strcmp(name, "Glassine Touch");
-        if (is_clone || (best < 0 && strstr(name, "cyttsp5"))) {
+        if (is_clone || (best < 0 && epd_adapter_touch(&adapter, name))) {
             if (best >= 0) close(best);
             best = fd;
             clone = is_clone;
@@ -3736,7 +3725,7 @@ static int bit_set(const unsigned long *b, int n) { return (b[n / (8 * sizeof(lo
 static int act_wanted(int fd, const char *name)
 {
     unsigned long ev[BITS(EV_MAX)] = { 0 }, key[BITS(KEY_MAX)] = { 0 }, rel[BITS(REL_MAX)] = { 0 }, prop[BITS(INPUT_PROP_MAX)] = { 0 };
-    if (!strcmp(name, "Glassine Touch") || strstr(name, "cyttsp5")) return 0;
+    if (!strcmp(name, "Glassine Touch") || epd_adapter_touch(&adapter, name)) return 0;
     if (ioctl(fd, EVIOCGBIT(0, sizeof ev), ev) < 0) return 0;
     ioctl(fd, EVIOCGPROP(sizeof prop), prop);
     if (bit_set(prop, INPUT_PROP_DIRECT)) return 0;         /* touchscreens, pens */
@@ -4936,6 +4925,9 @@ int main(int argc, char **argv)
     main_th = pthread_self();
     verbose = argc > 1 && !strcmp(argv[1], "-v");
     if (argc > 1 && !strcmp(argv[1], "-vv")) verbose = 2;
+    /* the device (no file: the defaults, the Note Air's) */
+    if (epd_adapter_load(&adapter, EPD_ADAPTER_CONF) && verbose)
+        fprintf(stderr, "glassine-epdd-desktop: no %s: the adapter's defaults\n", EPD_ADAPTER_CONF);
     set_gamma(1.8);
     pol_init(&pol, PH, PW);
     mo_init(&mo, PW);
@@ -4994,7 +4986,7 @@ int main(int argc, char **argv)
          * MAX17135 rails for each burst of frames (GLASSINE_EPDD_HV=0: dry run) */
         const char *hv = getenv("GLASSINE_EPDD_HV");
         char wbf[256];
-        epd_waveform_path(EPD_ADAPTER_CONF, wbf, sizeof wbf);   /* (env, epd.conf, old path) */
+        epd_adapter_waveform(&adapter, wbf, sizeof wbf);        /* (env, epd.conf, the default) */
         const char *gpu = getenv("GLASSINE_EPDD_GPU");
         epd_stream_gpu = !gpu ? 0 : !strcmp(gpu, "check") ? 2 : !strcmp(gpu, "pad") ? 3 : atoi(gpu);
         const char *gpe = getenv("GLASSINE_EPDD_GPE");
@@ -5011,7 +5003,7 @@ int main(int argc, char **argv)
             }
         }
         claim_state_conf();             /* (eink.conf's @claim_state=: before the engine opens) */
-        eng = epd_stream_open(wbf, battery_celsius(), hv ? atoi(hv) : 1);
+        eng = epd_stream_open(wbf, epd_adapter_celsius(&adapter, NULL), hv ? atoi(hv) : 1);
         if (!eng) { fprintf(stderr, "glassine-epdd-desktop: no /dev/ebc and no engine\n"); return 1; }
         pol.has_engine = 1;             /* motion=adaptive: WF_DU4, A2 cuts */
         /* the engine knobs set before it existed (GLASSINE_EPDD) */
@@ -5302,7 +5294,7 @@ int main(int argc, char **argv)
             if (tv) {
                 temp_override = !strncmp(tv + 5, "auto", 4) ? -100 : atoi(tv + 5);
                 eng_temp_ms = 0;                /* the next update reads it */
-                fprintf(stderr, "glassine-epdd-desktop: waveform temperature %s\n", temp_override > -100 ? tv + 5 : "from the battery");
+                fprintf(stderr, "glassine-epdd-desktop: waveform temperature %s\n", temp_override > -100 ? tv + 5 : "from the adapter");
             }
             if (strstr(cmd, "state")) fprintf(stderr, "glassine-epdd-desktop: state %s\n", state_name(pol.state));
             if (strstr(cmd, "sfnow") && eng) {  /* the model's shortfall right now, nothing reset (poll it during a scroll) */

@@ -13,7 +13,8 @@
  * epd-glyphs.h) across the bottom of the picture as seen, like glassine-epdd-desktop's
  * SLEEPING bar; glassine-splash's shutdown screen says POWERED OFF with it.
  * Mainline kernel (no /dev/ebc): the same picture through glassine-epdd-desktop's userspace
- * engine (epd-engine.c + epd-drm.c; the waveform as epd-waveform.h finds it): an INIT
+ * engine (epd-engine.c + epd-drm.c; the waveform and the temperature from the device
+ * adapter, epd-adapter.h): an INIT
  * flash to white, then a full update in the given mode; the panel levels are left in /run/glassine-epdd-desktop.levels. It
  * must finish before glassine-epdd-desktop opens the panel (glassine-x starts after glassine-splash). */
 #include <errno.h>
@@ -28,7 +29,7 @@
 #include <unistd.h>
 #include "epd-engine.h"
 #include "epd-drm.h"
-#include "epd-waveform.h"
+#include "epd-adapter.h"
 #include "epd-glyphs.h"
 
 #define EBC_SEND_UPDATE 0x700c
@@ -82,20 +83,6 @@ static void draw_bar(uint8_t *img, int w, int h, const char *text)
             img[(size_t)y * w + x] = epd_bar_ink(text, len, 6, w, BAR_H, x, y - (h - BAR_H)) ? 0xff : 0x00;
 }
 
-static int battery_celsius(void)             /* as glassine-epdd-desktop's */
-{
-    static const char *p[] = { "/sys/class/power_supply/qcom-battery/temp", "/sys/class/power_supply/battery/temp" };
-    for (unsigned i = 0; i < sizeof p / sizeof *p; i++) {
-        FILE *f = fopen(p[i], "r");
-        char b[32];
-        if (!f) continue;
-        int ok = fgets(b, sizeof b, f) != NULL;
-        fclose(f);
-        if (ok) return atoi(b) / 10;
-    }
-    return 24;
-}
-
 /* panel pixel (x, y) of the image, rotated as for /dev/ebc */
 static uint8_t px(const uint8_t *img, int portrait, int ccw, int x, int y)
 {
@@ -107,7 +94,9 @@ static int show_engine(const uint8_t *img, int portrait, int ccw, int mode)
 {
     const char *hv = getenv("GLASSINE_EPDD_HV");
     char wbf[256];
-    epd_stream *s = epd_stream_open(epd_waveform_path(EPD_ADAPTER_CONF, wbf, sizeof wbf), battery_celsius(), hv ? atoi(hv) : 1);
+    epd_adapter ad;                     /* no file: the defaults (epd-adapter.h) */
+    epd_adapter_load(&ad, EPD_ADAPTER_CONF);
+    epd_stream *s = epd_stream_open(epd_adapter_waveform(&ad, wbf, sizeof wbf), epd_adapter_celsius(&ad, NULL), hv ? atoi(hv) : 1);
     if (!s) { fprintf(stderr, "glassine-epd-show: no /dev/ebc and no engine\n"); return 1; }
     uint8_t *g = malloc((size_t)W * H);
     if (!g) return 1;

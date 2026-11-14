@@ -7,15 +7,17 @@
  * userspace engine (epd-engine.c + epd-drm.c), CPU only.
  *
  * Generic core + device adapter: everything about the device comes from the
- * adapter config (/etc/glassine/epd.conf, shipped by the device tree):
+ * adapter config (/etc/glassine/epd.conf, shipped by the device package; its
+ * keys and their defaults are in epd-adapter.h, which the other panel
+ * programs read it with too). This daemon uses:
  * panel_width, panel_height the panel's native size (the engine's, so far)
  * rotation the portrait surface -> the panel: ccw, cw or none
- * waveform the waveform file (glassine-epd-start fetches it)
- * temperature sysfs files tried in turn, value / temperature_scale = degrees C
+ * waveform the waveform file
+ * temperature, temperature_scale  the waveform's temperature
  * frontlight brightness files, off while asleep (each kept as it was)
  * sleep_text the asleep bar's text (capitals, epd-glyphs.h; default
  * PRESS POWER TO WAKE)
- * Unknown keys are ignored (glassine-epd-start reads its own).
+ * Unknown keys are ignored. Without the file it doesn't start.
  *
  * At start the panel is flashed white (INIT). Each frame drives only the
  * pixels that changed (GC16 partial); a frame that changes more than half the
@@ -38,14 +40,14 @@
 #include <unistd.h>
 #include "epd-engine.h"
 #include "epd-drm.h"
+#include "epd-adapter.h"
 #include "epd-glyphs.h"
 #include "glassine-epd-proto.h"
 
 #define W EPD_W                         /* the panel, as the engine is built */
 #define H EPD_H
 #define NBUF 4
-#define NTEMP 4
-#define NLIGHT 4
+#define NLIGHT EPD_AD_N
 #define BAR_H 72                        /* the asleep bar, as glassine-epd-show's */
 
 #define FOURCC(a, b, c, d) ((uint32_t)(a) | (uint32_t)(b) << 8 | (uint32_t)(c) << 16 | (uint32_t)(d) << 24)
@@ -54,12 +56,7 @@
 #define FMT_XRGB FOURCC('X', 'R', '2', '4')     /* bytes B G R X */
 #define FMT_ARGB FOURCC('A', 'R', '2', '4')
 
-enum { ROT_NONE, ROT_CCW, ROT_CW };
-
-static struct {                         /* the device adapter */
-    int width, height, rot, temp_scale;
-    char waveform[256], temp[NTEMP][256], light[NLIGHT][256], sleep_text[64];
-} ad = { W, H, ROT_CCW, 10, "/tmp/eink_waveform.wbf", { "" }, { "" }, "PRESS POWER TO WAKE" };
+static epd_adapter ad;                  /* the device adapter */
 
 static int asleep;
 static char light_was[NLIGHT][16];      /* the light's levels before SLEEP */
@@ -71,26 +68,7 @@ static uint8_t grey[W * H];             /* what was last submitted, panel order 
 
 static int load_adapter(const char *path)
 {
-    FILE *f = fopen(path, "r");
-    if (!f) { perror(path); return -1; }
-    char l[512];
-    int nt = 0, nl = 0;
-    while (fgets(l, sizeof l, f)) {
-        char *v = strchr(l, '=');
-        if (*l == '#' || !v) continue;
-        *v++ = 0;
-        v[strcspn(v, "\r\n#")] = 0;          /* (sleep_text keeps its spaces) */
-        for (char *e = v + strlen(v); e > v && (e[-1] == ' ' || e[-1] == '\t');) *--e = 0;
-        if (!strcmp(l, "panel_width")) ad.width = atoi(v);
-        else if (!strcmp(l, "panel_height")) ad.height = atoi(v);
-        else if (!strcmp(l, "rotation")) ad.rot = !strcmp(v, "cw") ? ROT_CW : !strcmp(v, "none") ? ROT_NONE : ROT_CCW;
-        else if (!strcmp(l, "waveform")) snprintf(ad.waveform, sizeof ad.waveform, "%s", v);
-        else if (!strcmp(l, "temperature") && nt < NTEMP) snprintf(ad.temp[nt++], sizeof ad.temp[0], "%s", v);
-        else if (!strcmp(l, "temperature_scale")) ad.temp_scale = atoi(v) > 0 ? atoi(v) : 1;
-        else if (!strcmp(l, "frontlight") && nl < NLIGHT) snprintf(ad.light[nl++], sizeof ad.light[0], "%s", v);
-        else if (!strcmp(l, "sleep_text")) snprintf(ad.sleep_text, sizeof ad.sleep_text, "%s", v);
-    }
-    fclose(f);
+    if (epd_adapter_load(&ad, path)) { perror(path); return -1; }
     if (ad.width != W || ad.height != H) {
         fprintf(stderr, "glassine-epdd: %s: panel %dx%d, the engine drives %dx%d only\n", path, ad.width, ad.height, W, H);
         return -1;
@@ -98,22 +76,11 @@ static int load_adapter(const char *path)
     return 0;
 }
 
-static int celsius(void)
-{
-    for (int i = 0; i < NTEMP && *ad.temp[i]; i++) {
-        FILE *f = fopen(ad.temp[i], "r");
-        char b[32];
-        if (!f) continue;
-        int ok = fgets(b, sizeof b, f) != NULL;
-        fclose(f);
-        if (ok) return atoi(b) / ad.temp_scale;
-    }
-    return 24;
-}
+static int celsius(void) { return epd_adapter_celsius(&ad, NULL); }
 
 /* the surface the clients draw: portrait unless the panel is used as it is */
-static uint32_t surf_w(void) { return ad.rot == ROT_NONE ? W : H; }
-static uint32_t surf_h(void) { return ad.rot == ROT_NONE ? H : W; }
+static uint32_t surf_w(void) { return ad.rot == EPD_ROT_NONE ? W : H; }
+static uint32_t surf_h(void) { return ad.rot == EPD_ROT_NONE ? H : W; }
 
 static void drop(uint32_t id)
 {
@@ -144,8 +111,8 @@ static void take_buf(const struct glassine_epd_msg *m, int fd)
 /* surface (u, v) is panel (W - 1 - v, u) for ccw, (v, H - 1 - u) for cw */
 static inline void to_panel(int u, int v, int *x, int *y)
 {
-    *x = ad.rot == ROT_CCW ? W - 1 - v : ad.rot == ROT_CW ? v : u;
-    *y = ad.rot == ROT_CCW ? u : ad.rot == ROT_CW ? H - 1 - u : v;
+    *x = ad.rot == EPD_ROT_CCW ? W - 1 - v : ad.rot == EPD_ROT_CW ? v : u;
+    *y = ad.rot == EPD_ROT_CCW ? u : ad.rot == EPD_ROT_CW ? H - 1 - u : v;
 }
 
 /* the surface's rect into the panel's grey; the bounding box of the panel
