@@ -166,18 +166,21 @@ void epd_template(uint32_t *b)
 
 /* ---- engine --------------------------------------------------------------- */
 
+/* ---- the knobs (epd-knobs.h): defined here, the env read once at epd_init */
+EPD_KNOBS_ENGINE(EPD_KNOB_DEFINE)
+#define KNOB_IDX(var, ...) KN_##var,
+enum { EPD_KNOBS_ENGINE(KNOB_IDX) KN_N };
+static const epd_knob eng_knobs[] = { EPD_KNOBS_ENGINE(EPD_KNOB_ROW) };
+#define KNOB_DEF(var) (eng_knobs[KN_##var].def)  /* (a knob set back to -1 after epd_init: its default) */
+static int pk_w_malloc;                         /* GLASSINE_CLAIM_STATE_W=malloc (pk_wfd) */
+
 /* ---- : the state's allocation, D/W/T --------------- */
-int epd_claim_state = -1;
 unsigned long epd_claim_state_diffs, epd_claim_state_checked;
 
 static int claim_state_of(void)
 {
     int k = __atomic_load_n(&epd_claim_state, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (GLASSINE_CLAIM_STATE, at the first engine) */
-        const char *v = getenv("GLASSINE_CLAIM_STATE");
-        k = !v ? 0 : !strcmp(v, "packed") ? 1 : !strcmp(v, "check") ? 2 : 0;
-        __atomic_store_n(&epd_claim_state, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_state);   /* (GLASSINE_CLAIM_STATE: epd_init) */
     return k > 2 ? 0 : k;
 }
 
@@ -189,15 +192,10 @@ const char *epd_claim_state_name(const epd_engine *e)
 /* stagger_state (epd_stagger_state; -1 = GLASSINE_STAGGER_STATE=lanes|runs
  * at epd_init, not live): lanes = D and T dma-bufs too (packed only), the
  * stagger's GPU pass imports them (epd-gpu.c stag_lanes) */
-int epd_stagger_state = -1;
 static int stagger_state_of(void)
 {
     int k = __atomic_load_n(&epd_stagger_state, __ATOMIC_RELAXED);
-    if (k < 0) {
-        const char *v = getenv("GLASSINE_STAGGER_STATE");
-        k = v && !strcmp(v, "lanes");
-        __atomic_store_n(&epd_stagger_state, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_stagger_state);
     return k;
 }
 
@@ -207,7 +205,6 @@ static int stagger_state_of(void)
  * never tried) */
 struct epd_sync_partial { uint64_t flags; uint32_t offset, len; };
 #define EPD_SYNC_PARTIAL _IOW(DMA_BUF_BASE, 2, struct epd_sync_partial)
-int epd_dmabuf_partial = -1;
 double epd_dmabuf_sync_s;
 unsigned long epd_dmabuf_sync_n;
 static double sync_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
@@ -252,10 +249,7 @@ int epd_dmabuf_sync_at(const char *file, int line, int fd, unsigned flags, size_
     if (fd < 0) return 0;
     double t0 = sync_now();
     int r = -1, p = __atomic_load_n(&epd_dmabuf_partial, __ATOMIC_RELAXED);
-    if (p < 0) {                                    /* (2: to be probed) */
-        const char *v = getenv("GLASSINE_DMABUF_PARTIAL");
-        p = v && atoi(v) == 0 ? 0 : 2;
-    }
+    if (p < 0) p = 2;                               /* (to be probed; GLASSINE_DMABUF_PARTIAL=0: 0 from epd_init) */
     if (p && len) {
         struct epd_sync_partial sp = { flags, (uint32_t)off, (uint32_t)len };
         r = ioctl(fd, EPD_SYNC_PARTIAL, &sp);
@@ -310,8 +304,7 @@ static int pk_dmabuf(size_t n, const char **src)
 static int pk_wfd(size_t n, const char **src)
 {
 #ifdef __linux__
-    const char *v = getenv("GLASSINE_CLAIM_STATE_W");        /* (malloc: no dma-buf, epd-gpu packs st from W: the tex fallback, a test) */
-    if (v && !strcmp(v, "malloc")) return -1;
+    if (pk_w_malloc) return -1;                 /* (GLASSINE_CLAIM_STATE_W=malloc: no dma-buf, epd-gpu packs st from W: the tex fallback, a test) */
     return pk_dmabuf(n, src);
 #else
     (void)n; (void)src;
@@ -548,8 +541,22 @@ void epd_state_reset(epd_engine *e)
     epd_state_fill(e, EPD_F_STALE, 1);
 }
 
+/* the knobs' environment, at each epd_init (the first one resolves them:
+ * a knob already set, by its owner or the daemon, keeps its value); the only
+ * getenv of the engine */
+static void knobs_env(void)
+{
+    epd_knobs_env(eng_knobs, KN_N);
+    const char *v = getenv("GLASSINE_DMABUF_PARTIAL");
+    if (v && atoi(v) == 0 && __atomic_load_n(&epd_dmabuf_partial, __ATOMIC_RELAXED) < 0)
+        __atomic_store_n(&epd_dmabuf_partial, 0, __ATOMIC_RELAXED);
+    v = getenv("GLASSINE_CLAIM_STATE_W");
+    pk_w_malloc = v && !strcmp(v, "malloc");
+}
+
 int epd_init(epd_engine *e, const uint8_t *wbf, size_t n, int celsius)
 {
+    knobs_env();
     memset(e, 0, sizeof *e);
     if (epd_wbf_load(&e->wbf, wbf, n)) return -1;
     e->celsius = celsius;
@@ -576,7 +583,6 @@ int epd_init(epd_engine *e, const uint8_t *wbf, size_t n, int celsius)
  * or memset), so the output is the same byte for byte */
 #define TPOOL_MAX 8
 #define TPOOL_MIN ((size_t)128 * 1024)
-int epd_target_pool = 4;
 static struct { void *p; size_t cap; } tpool[TPOOL_MAX];
 static int ntpool;
 static pthread_mutex_t tpool_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -1599,9 +1605,7 @@ static void ext_cols(epd_claim_out *o, int k, const uint8_t *col, int n)
     o->x0[k] = x0; o->x1[k] = x1;
 }
 
-int epd_tile_stat_on;
 epd_tile_stats epd_tile_stat;
-int epd_sched_prof;                 /* epd-engine.h: epd_sched_t while set */
 epd_sched_times epd_sched_t;
 static double sched_prof_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
 
@@ -1904,7 +1908,6 @@ static void claim_pixels_soa(epd_engine *e, epd_claim_plan *pl, epd_claim_out *o
  * — the one place they differ: dc_row_bw clamps the whole row's record when
  * oa took a pixel there (heal_row may leave it at 30008), done here after the
  * sweep for those rows. */
-int epd_claim_kernel = -1;
 unsigned long epd_claim_kernel_soa, epd_claim_kernel_diffs;
 
 /* the boundary: a row of the arrays into D/W/T and back (until the arrays go) */
@@ -2141,15 +2144,10 @@ static double pk_prof_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTON
 #define PK_PROF_T0(v)
 #define PK_PROF_ADD(acc, v)
 #endif
-int epd_claim_skip = -1;
 __attribute__((unused)) static int claim_skip_of(void)
 {
     int k = __atomic_load_n(&epd_claim_skip, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (GLASSINE_CLAIM_SKIP=1, at the first claim) */
-        const char *v = getenv("GLASSINE_CLAIM_SKIP");
-        k = v && !strcmp(v, "1");
-        __atomic_store_n(&epd_claim_skip, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_skip);    /* (GLASSINE_CLAIM_SKIP=1: epd_init) */
     return k;
 }
 #if defined(__aarch64__)
@@ -2758,21 +2756,16 @@ static int (*pk_band_init(const epd_claim_plan *pl, const epd_claim_job *j, epd_
     return pk_rows[pk_row_kind(pl, j)];
 }
 
-/* tail16 (; epd_claim_tail16, -1 = GLASSINE_CLAIM_TAIL16 at the
- * first claim, default 1, 0 = off): a row's last W % 16 pixels as one vector
+/* tail16 (; epd_claim_tail16, -1 = GLASSINE_CLAIM_TAIL16 at
+ * epd_init, default 1, 0 = off): a row's last W % 16 pixels as one vector
  * step over a 16-lane copy whose other lanes can't change (idle, at their
  * target 15, off the rails, stale 0, DC 0) instead of the scalar pk_row; not
  * for a flash plan (fm: its idle pixels count or claim whatever they hold) */
-int epd_claim_tail16 = -1;
 static int pk_tail_on(const epd_claim_plan *pl, int W)
 {
     if (!(W & 15) || pl->fm || pk_scalar) return 0;
     int k = __atomic_load_n(&epd_claim_tail16, __ATOMIC_RELAXED);
-    if (k < 0) {
-        const char *v = getenv("GLASSINE_CLAIM_TAIL16");
-        k = !(v && !strcmp(v, "0"));
-        __atomic_store_n(&epd_claim_tail16, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_tail16);
     return k;
 }
 static int pk_tail16(epd_claim_band *B, int (*row)(PK_ROW_ARGS), uint32_t *restrict d, uint16_t *restrict w, uint8_t *restrict t,
@@ -2917,15 +2910,10 @@ void epd_claim_rows(epd_engine *e, const epd_claim_plan *pl, const epd_claim_job
 /* (claim_state packed, and check's D/W/T): rows [ya, yb) of the claim on
  * the state in place: D and T at the rect, W from w0 (the rect's first
  * pixel), rows wst apart (the state's W, or the job's Wsh) */
-int epd_claim_prefetch = -1;
 static int claim_prefetch_of(void)
 {
     int k = __atomic_load_n(&epd_claim_prefetch, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (GLASSINE_CLAIM_PREFETCH=1, at the first claim) */
-        const char *v = getenv("GLASSINE_CLAIM_PREFETCH");
-        k = v && !strcmp(v, "1");
-        __atomic_store_n(&epd_claim_prefetch, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_prefetch);    /* (GLASSINE_CLAIM_PREFETCH=1: epd_init) */
     return k;
 }
 
@@ -3003,7 +2991,6 @@ void epd_claim_merge(const epd_claim_plan *pl, epd_claim_band *const *b, int n, 
  * makes. The arrays' pass gets a row range of its own (claim_rows_soa: its
  * fast path letter for letter, the bench's band_rows made production); its
  * healed count stays its rule (the heal run's pixels over the merged rect) */
-int epd_claim_bands = -1;
 
 static void claim_rows_soa(epd_engine *e, const epd_claim_plan *pl, const epd_claim_job *j, epd_claim_band *B, int ya, int yb)
 {
@@ -3107,12 +3094,7 @@ static void claim_rows_soa(epd_engine *e, const epd_claim_plan *pl, const epd_cl
 static int claim_nbands(const epd_claim_plan *pl)
 {
     int n = __atomic_load_n(&epd_claim_bands, __ATOMIC_RELAXED);
-    if (n < 0) {                                /* (GLASSINE_CLAIM_BANDS, once) */
-        const char *v = getenv("GLASSINE_CLAIM_BANDS");
-        n = v ? atoi(v) : 4;                    /* (4 since the run-end cleanup's full-panel claim 53 -> 17 ms p50 on the device) */
-        n = n < 1 ? 1 : n > EPD_CLAIM_BANDS_MAX ? EPD_CLAIM_BANDS_MAX : n;
-        __atomic_store_n(&epd_claim_bands, n, __ATOMIC_RELAXED);
-    }
+    if (n < 0) n = KNOB_DEF(epd_claim_bands);   /* (GLASSINE_CLAIM_BANDS: epd_init; 4 since the run-end cleanup's full-panel claim 53 -> 17 ms p50 on the device) */
     if (n > EPD_CLAIM_BANDS_MAX) n = EPD_CLAIM_BANDS_MAX;
     if (n <= 1 || !epd_claim_bandable(pl) || (long)pl->r.w * pl->r.h < EPD_BAND_MIN_PX || pl->r.h < n) return 1;
     return n;
@@ -3332,11 +3314,7 @@ void epd_claim_pixels(epd_engine *e, epd_claim_plan *pl, epd_claim_out *out)
 static void claim_pixels_arrays(epd_engine *e, epd_claim_plan *pl, epd_claim_out *out)
 {
     int k = __atomic_load_n(&epd_claim_kernel, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (GLASSINE_CLAIM_KERNEL, once) */
-        const char *v = getenv("GLASSINE_CLAIM_KERNEL");
-        k = !v ? 0 : !strcmp(v, "packed") ? 1 : !strcmp(v, "check") ? 2 : 0;
-        __atomic_store_n(&epd_claim_kernel, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_kernel);  /* (GLASSINE_CLAIM_KERNEL: epd_init) */
     if (k && !epd_claim_bandable(pl)) { epd_claim_kernel_soa++; k = 0; }
     if (k == 1) claim_pixels_packed(e, pl, out);
     else if (k == 2) claim_pixels_check(e, pl, out);
@@ -3349,11 +3327,7 @@ static void claim_pixels_arrays(epd_engine *e, epd_claim_plan *pl, epd_claim_out
 static int job_kernel(void)
 {
     int k = __atomic_load_n(&epd_claim_kernel, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (as epd_claim_pixels) */
-        const char *v = getenv("GLASSINE_CLAIM_KERNEL");
-        k = !v ? 0 : !strcmp(v, "packed") ? 1 : !strcmp(v, "check") ? 2 : 0;
-        __atomic_store_n(&epd_claim_kernel, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_claim_kernel);  /* (as epd_claim_pixels) */
     return k;
 }
 
@@ -3401,15 +3375,10 @@ static void pk_finish_row(uint16_t *restrict w, int n, uint8_t own)
     }
 }
 
-int epd_finish_mask = -1;
 static int finish_mask_of(void)
 {
     int k = __atomic_load_n(&epd_finish_mask, __ATOMIC_RELAXED);
-    if (k < 0) {                                /* (GLASSINE_FINISH_MASK=0 turns it off) */
-        const char *v = getenv("GLASSINE_FINISH_MASK");
-        k = !(v && !strcmp(v, "0"));
-        __atomic_store_n(&epd_finish_mask, k, __ATOMIC_RELAXED);
-    }
+    if (k < 0) k = KNOB_DEF(epd_finish_mask);   /* (GLASSINE_FINISH_MASK=0 turns it off: epd_init) */
     return k;
 }
 

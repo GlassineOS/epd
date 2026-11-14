@@ -846,7 +846,7 @@ int epd_ingest_frame_cpu(epd_ingest *g, int buf, const epd_ingest_rect *r, int n
 
 /* the switches (epd-ingest.h), unset (< -1 /
  * -1) until the first CPU frame reads GLASSINE_INGEST_KERNEL / _BANDS / _SYNC */
-int epd_ingest_kernel = -1, epd_ingest_bands = -1, epd_ingest_sync = -2, epd_ingest_partial = -1;
+EPD_KNOBS_INGEST(EPD_KNOB_DEFINE)  /* (epd-knobs.h) */
 
 int epd_ingest_kernel_of(const char *s)
 {

@@ -32,6 +32,7 @@
 #include "epd-bp4.h"
 #include "epd-bluenoise.h"
 #include "epd-gldebug.h"
+EPD_KNOBS_GPU(EPD_KNOB_DEFINE)     /* (epd-knobs.h: the first values; what they do: epd-gpu.h and the comments where they are read) */
 
 #ifndef GL_MAP_PERSISTENT_BIT_EXT               /* (GL_EXT_buffer_storage, older headers) */
 #define GL_MAP_PERSISTENT_BIT_EXT 0x0040
@@ -467,7 +468,6 @@ int epd_gpu_target_dmabuf(epd_gpu *g, int fd, int pitch, size_t size)
 /* drive_state=heap: a dma-buf of n bytes, the system dma-heap's (cached pages:
  * the device, root), else a udmabuf over a memfd (the host's stand-in: the
  * same import, mmap and sync ioctls, no root); -1 neither */
-int epd_gpu_drive_state = -1;
 int close(int fd);                      /* (not unistd.h: its link is taken here) */
 int ftruncate(int fd, off_t n);
 int memfd_create(const char *name, unsigned flags);
@@ -1330,9 +1330,6 @@ enum { GU_S = 4, GU_D, GU_T, GU_N, GU_B, GU_L };
 
 /* per-pass profile (epd_gpu_prof_on): the GPU finished after each pass, the
  * time since the previous mark added to its slot; slows everything down */
-int epd_gpu_prof_on;
-int epd_gpu_gpe_debug;
-int epd_gpu_gpe_noatom;
 void (*epd_gpu_gpe_debug_hook)(const char *what);
 /* epd_gpu_gpe_debug: the GPU finished after pass `what`, a GL error printed */
 static void gl_check(epd_gpu *g, const char *what)
@@ -2086,12 +2083,10 @@ enum { GS_H = 10, GS_C, GS_T, GS_WD, GS_OC, GS_LC, GS_GM = 3, GS_AT = 2 };
 #define CPLANE_SH 8
 #define CPLANE (1 << CPLANE_SH)                /* the cold planes' stride: >= GW, a power of two */
 _Static_assert(GW <= CPLANE, "a cold plane holds a row of words");
-int epd_gpu_stag_timer;
 /* the tile skip (-1: GLASSINE_STAG_TSKIP, default 1; 0 off): a workgroup tile idle for
  * its G frames since its last work, its targets and state unchanged since
  * G frames, and the pass's params the same, writes its no-drive output and
  * nothing else (its state as it is: every pixel there would skip) */
-int epd_gpu_stag_tskip = -1;
 /* LEAD (-1: GLASSINE_STAG_LEAD, default 0; 1 on, 0 off; a workaround, opt-in):
  * the A509 loses one wave's stores in the first workgroup row of a compute
  * dispatch after a program switch across a CPU wait under foreign GPU load
@@ -2101,11 +2096,9 @@ int epd_gpu_stag_tskip = -1;
  * the real rows follow one workgroup row down. The scratch rows exist only
  * when it was on at epd_gpu_stag_open (sg.lr); a later "on" waits for the
  * next open */
-int epd_gpu_stag_lead = -1;
 /* cells in rank order (-1: GLASSINE_STAG_CREMAP, default 1; 0: in place, a timing
  * comparison): with SWY 64 the word pass runs a tile's cells sorted by their
  * rank, so a wave holds one group; the same results */
-int epd_gpu_stag_cremap = -1;
 /* lanes with per-pixel groups (blue noise): the NOHOIST, NJ 8 shape (stag_prog;
  * GLASSINE_STAG_LPX=0: the hoisted one, a timing comparison); the same results */
 static int epd_gpu_stag_lpx(void)

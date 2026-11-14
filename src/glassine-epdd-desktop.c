@@ -541,6 +541,7 @@
 #include "epd-brush.h"
 #include "epd-profpath.h"
 #include "epd-group.h"
+#include "epd-knobs-ctl.h"
 #ifdef EPD_GPU
 extern int epd_gpu_stag_timer;         /* epd-gpu.c: the stagger's timer queries */
 extern double epd_gpu_stag_ms[3];
@@ -851,13 +852,14 @@ static void upd_parse(const char *cmd)
             if (n && n < sizeof update_list) { memcpy(update_list, v, n); update_list[n] = 0; update_cpus = 2; }
         }
     }
-    if (strstr(cmd, "worker_rt=fifo")) __atomic_store_n(&epd_stream_worker_rt, 0, __ATOMIC_RELAXED);
-    if (strstr(cmd, "worker_rt=nice")) __atomic_store_n(&epd_stream_worker_rt, 1, __ATOMIC_RELAXED);
 }
 
 static void apply_cmd(const char *cmd)
 {
     const char *v;
+    /* the engine's, the drive's, the GPU's and the ingest's knobs: the list
+     * (epd-knobs.h) and its parser (epd-knobs-ctl.h); the rest are the daemon's */
+    epd_knobs_ctl(cmd, NULL, eng);
     if ((v = strstr(cmd, "main_nice=")) || strstr(cmd, "main_slice=")) {
         if (v) { int n = atoi(v + 10); if (n >= -20 && n <= 19) main_nice = n; }
         if ((v = strstr(cmd, "main_slice="))) { int u = atoi(v + 11); if (u == 0 || (u >= 100 && u <= 100000)) main_slice_us = u; }
@@ -875,20 +877,11 @@ static void apply_cmd(const char *cmd)
     if (strstr(cmd, "ink=apps")) ink_mode = 1;
     if (strstr(cmd, "ink_halo=on")) ink_halo_set(1);
     if (strstr(cmd, "ink_halo=off")) ink_halo_set(0);
-    if ((v = strstr(cmd, "target_pool="))) epd_target_pool = atoi(v + 12) < 0 ? 0 : atoi(v + 12) > 8 ? 8 : atoi(v + 12);
     if (strstr(cmd, "ingest=cpu")) ingest_mode = 0;
     if (strstr(cmd, "ingest=gpu")) ingest_mode = 1;
     if (strstr(cmd, "ingest=check")) ingest_mode = 2;
     if (strstr(cmd, "ingest_view=on")) ingest_view = 1;
     if (strstr(cmd, "ingest_view=off")) { ingest_view = 0; wl_view_off(); }
-    /* read by every ingest=cpu frame (epd-ingest.h) */
-    if ((v = strstr(cmd, "ingest_kernel="))) __atomic_store_n(&epd_ingest_kernel, epd_ingest_kernel_of(v + 14), __ATOMIC_RELAXED);
-    if ((v = strstr(cmd, "ingest_bands="))) {
-        int n = atoi(v + 13);
-        __atomic_store_n(&epd_ingest_bands, n < 1 ? 1 : n > 4 ? 4 : n, __ATOMIC_RELAXED);
-    }
-    if ((v = strstr(cmd, "ingest_sync="))) __atomic_store_n(&epd_ingest_sync, epd_ingest_sync_of(v + 12), __ATOMIC_RELAXED);
-    if ((v = strstr(cmd, "ingest_partial="))) __atomic_store_n(&epd_ingest_partial, strncmp(v + 15, "off", 3) != 0, __ATOMIC_RELAXED);
     if (strstr(cmd, "ingwait=on")) ingest_wait = 1;
     if (strstr(cmd, "ingwait=off")) ingest_wait = 0;
     if (strstr(cmd, "lazy=on")) wl_lazy_set(1);
@@ -900,12 +893,6 @@ static void apply_cmd(const char *cmd)
     if (strstr(cmd, "a2=on")) eng_a2 = 1;
     if (strstr(cmd, "a2=off")) eng_a2 = 0;
     if ((v = strstr(cmd, "keepalive="))) eng_keepalive_ms = atoi(v + 10);
-    if ((v = strstr(cmd, "link_warm="))) {
-        int ms = atoi(v + 10);
-        __atomic_store_n(&epd_stream_link_warm_ms, ms < 0 ? 0 : ms, __ATOMIC_RELAXED);
-    }
-    if (strstr(cmd, "link_log=on")) epd_stream_link_log = 1;
-    if (strstr(cmd, "link_log=off")) epd_stream_link_log = 0;
     if ((v = strstr(cmd, "boost="))) boost_ms = atoi(v + 6);
     if (strstr(cmd, "boost_run=on")) boost_run = 1;
     if (strstr(cmd, "boost_run=off")) boost_run = 0;
@@ -944,17 +931,6 @@ static void apply_cmd(const char *cmd)
     if (strstr(cmd, "model=optical")) eng_model = 1;
     if (strstr(cmd, "model=track")) { eng_model = 0; eng_track = 1; }
     if (strstr(cmd, "model=") && eng) epd_stream_set_model(eng, eng_model, eng_track);
-    /* read by every claim (epd-engine.h epd_claim_kernel) */
-    if (strstr(cmd, "claim_kernel=soa")) __atomic_store_n(&epd_claim_kernel, 0, __ATOMIC_RELAXED);
-    if (strstr(cmd, "claim_kernel=packed")) __atomic_store_n(&epd_claim_kernel, 1, __ATOMIC_RELAXED);
-    if (strstr(cmd, "claim_kernel=check")) __atomic_store_n(&epd_claim_kernel, 2, __ATOMIC_RELAXED);
-    /* banded claims (every claim), the job (the stream thread's loop top) */
-    if ((v = strstr(cmd, "claim_bands="))) {
-        int n = atoi(v + 12);
-        __atomic_store_n(&epd_claim_bands, n < 1 ? 1 : n > EPD_CLAIM_BANDS_MAX ? EPD_CLAIM_BANDS_MAX : n, __ATOMIC_RELAXED);
-    }
-    if (strstr(cmd, "drive_overlap=on")) __atomic_store_n(&epd_stream_drive_overlap, 1, __ATOMIC_RELAXED);
-    if (strstr(cmd, "drive_overlap=off")) __atomic_store_n(&epd_stream_drive_overlap, 0, __ATOMIC_RELAXED);
     /* the update job */
     if ((v = strstr(cmd, "commit_skip="))) __atomic_store_n(&commit_skip, v[12] != '0', __ATOMIC_RELAXED);
     if ((v = strstr(cmd, "update_acct="))) __atomic_store_n(&upd_acct, v[12] == '1', __ATOMIC_RELAXED);     /* (step 3) */
@@ -962,50 +938,6 @@ static void apply_cmd(const char *cmd)
         upd_parse(cmd);
         upd_apply();
     }
-    /* staggered cut steps (epd-drm.c epd_stream_stagger), live */
-    if (strstr(cmd, "stagger=on")) epd_stream_stagger = 1, epd_stream_stag_check = 0;
-    if (strstr(cmd, "stagger=off")) epd_stream_stagger = 0, epd_stream_stag_check = 0;
-    if (strstr(cmd, "stagger=check")) epd_stream_stagger = 1, epd_stream_stag_check = 1;
-    if ((v = strstr(cmd, "stagger_direct="))) epd_stream_stag_direct = atoi(v + 15) != 0;
-#ifdef EPD_GPU
-    if (strstr(cmd, "stagger_tskip=on")) epd_gpu_stag_tskip = 1;
-    if (strstr(cmd, "stagger_tskip=off")) epd_gpu_stag_tskip = 0;
-    if (strstr(cmd, "stagger_lead=on")) epd_gpu_stag_lead = 1;
-    if (strstr(cmd, "stagger_lead=off")) epd_gpu_stag_lead = 0;
-    if (strstr(cmd, "drive_state=heap")) epd_gpu_drive_state = 1;
-    if (strstr(cmd, "drive_state=tex")) epd_gpu_drive_state = 0;
-#endif
-    if ((v = strstr(cmd, "stagger_ctl="))) epd_stream_stag_ctl = atoi(v + 12) < 0 ? 0 : atoi(v + 12) > 4 ? 4 : atoi(v + 12);
-    if (strstr(cmd, "stagger_a21=on")) epd_stream_stag_a21 = 1;
-    if (strstr(cmd, "stagger_a21=off")) epd_stream_stag_a21 = 0;
-    if ((v = strstr(cmd, "stagger_idle="))) epd_stream_stag_sidle = !strncmp(v + 13, "shared", 6);
-    if ((v = strstr(cmd, "stagger_k="))) epd_stream_stag_k = atoi(v + 10) < 0 ? 0 : atoi(v + 10) > 15 ? 15 : atoi(v + 10);
-    if ((v = strstr(cmd, "stagger_pay="))) {
-        if (!strncmp(v + 12, "panel", 5)) epd_stream_stag_payrule = 1;
-        else epd_stream_stag_payrule = 0, epd_stream_stag_pay = atoi(v + 12) > 0 ? atoi(v + 12) : 0;
-    }
-    if ((v = strstr(cmd, "stagger_stripe="))) {     /* (the GPU engine: 64 only; blocks, cells: stripe 64 cut up) */
-        int cw = 0, ch = 0, wb = !strncmp(v + 15, "wbayer", 6);
-        if (!strncmp(v + 15, "cells", 5) && epd_stag_cells_parse(v + 15, &cw, &ch))
-            fprintf(stderr, "glassine-epdd-desktop: stagger_stripe: %.16s is no cell shape (cells, cellsN, cellsWxH: W 8 16 32 64, H 1..64, powers of two)\n", v + 15);
-        if (wb) cw = 8, ch = 1;
-        epd_stream_stag_cellw = cw, epd_stream_stag_cellh = ch;
-        epd_stream_stag_cellord = wb ? EPD_STAG_CORD_WBAYER : EPD_STAG_CORD_BN;
-        epd_stream_stag_blocks = !strncmp(v + 15, "blocks", 6);
-        epd_stream_stag_stripe = epd_stream_stag_blocks || wb || !strncmp(v + 15, "cells", 5) || atoi(v + 15) == 64 ? 64 : 0;   /* (a bad shape: stripes) */
-    }
-    if ((v = strstr(cmd, "stagger_cap="))) epd_stream_stag_cap = atoi(v + 12) < 0 ? -1 : atoi(v + 12);
-    if ((v = strstr(cmd, "stagger_linger="))) epd_stream_stag_linger = atoi(v + 15);
-    if ((v = strstr(cmd, "stagger_warm="))) epd_stream_stag_warm = strncmp(v + 13, "off", 3) != 0;
-    if ((v = strstr(cmd, "stagger_entry="))) epd_stream_stag_entry = !strncmp(v + 14, "first", 5);
-    if (strstr(cmd, "gpu_hang_test=1")) {
-        epd_stream_gpu_hang_test = 1;
-        fprintf(stderr, "glassine-epdd-desktop: gpu_hang_test: the next GPU frame is taken as hung (abandon, then the revive)\n");
-    }
-    if ((v = strstr(cmd, "hammer_top="))) epd_stream_stag_htop = atoi(v + 11) < 0 ? 0 : atoi(v + 11) > 7 ? 7 : atoi(v + 11);
-#ifdef EPD_GPU
-    if ((v = strstr(cmd, "stagger_timer="))) epd_gpu_stag_timer = atoi(v + 14) != 0;
-#endif
     if ((v = strstr(cmd, "dither_pattern="))) {
         dither_pattern = epd_dither_parse(v + 15);
         fprintf(stderr, "glassine-epdd-desktop: dither_pattern=%s (from the next commit)\n", epd_dither_name(dither_pattern));
@@ -1037,13 +969,7 @@ static void apply_cmd(const char *cmd)
                 epd_stream_stag_direct < 0 ? "default" : epd_stream_stag_direct ? "on" : "off", epd_stream_stag_stripe,
                 epd_stream_stag_cellord ? " wbayer " : epd_stream_stag_cellw ? " cells " : epd_stream_stag_blocks ? " blocks" : "", epd_stream_stag_cellw,
                 epd_stream_stag_cellw ? "x" : "", epd_stream_stag_cellh);
-    if (strstr(cmd, "jit=on")) epd_stream_jit = 1;
-    if (strstr(cmd, "jit=off")) epd_stream_jit = 0;
-    if (strstr(cmd, "jit_size=on")) epd_stream_jit_size = 1;
-    if (strstr(cmd, "jit_size=off")) epd_stream_jit_size = 0;
     /* the hand-off inbox (a device A/B: lock = the old path) */
-    if (strstr(cmd, "handoff=inbox")) epd_stream_inbox = 1;
-    if (strstr(cmd, "handoff=lock")) epd_stream_inbox = 0;
     if (strstr(cmd, "handoff=")) fprintf(stderr, "glassine-epdd-desktop: handoff=%s\n", epd_stream_inbox ? "inbox" : "lock");
     /* the timing records (default off): drive_prof / main_prof */
     if ((v = strstr(cmd, "prof_every="))) { int n = atoi(v + 11); if (n >= 1 && n <= 3600) prof_every = n; }
@@ -1065,16 +991,6 @@ static void apply_cmd(const char *cmd)
     }
     if (strstr(cmd, "drive_prof") || strstr(cmd, "prof_every=")) drive_prof_apply();
     /* (engine only): threads per frame, their uclamp.min, CPU wakeup latency hold */
-    if ((v = strstr(cmd, "nwork="))) epd_stream_nwork = atoi(v + 6);
-    if ((v = strstr(cmd, "rt_umin="))) {
-        int u = strncmp(v + 8, "default", 7) ? atoi(v + 8) : -1;
-        if (eng) epd_stream_set_rt_umin(eng, u); else epd_stream_rt_umin = u;
-    }
-    if ((v = strstr(cmd, "qos="))) {        /* global | off | cpu:N (us; cpu:0 = none tolerated) */
-        if (!strncmp(v + 4, "global", 6)) epd_stream_qos = -1;
-        else if (!strncmp(v + 4, "off", 3)) epd_stream_qos = -2;
-        else if (!strncmp(v + 4, "cpu:", 4)) epd_stream_qos = atoi(v + 8);
-    }
     if (strstr(cmd, "nwork=") || strstr(cmd, "rt_umin=") || strstr(cmd, "qos="))
         fprintf(stderr, "glassine-epdd-desktop: nwork=%d rt_umin=%d qos=%d (-1 global, -2 off, N us on the stream CPUs; "
                 "qos: from the next link-up)\n", epd_stream_nwork, epd_stream_rt_umin, epd_stream_qos);
@@ -5091,7 +5007,7 @@ int main(int argc, char **argv)
             for (int i = 0; i < 4; i++) {
                 const char *e = getenv(ek[i][0]);
                 char c[128];
-                if (e && *e) { snprintf(c, sizeof c, "%s=%s", ek[i][1], e); upd_parse(c); }
+                if (e && *e) { snprintf(c, sizeof c, "%s=%s", ek[i][1], e); upd_parse(c); epd_knobs_ctl(c, NULL, NULL); }
             }
         }
         claim_state_conf();             /* (eink.conf's @claim_state=: before the engine opens) */
@@ -5416,6 +5332,9 @@ int main(int argc, char **argv)
                         pst.n ? pst.us / pst.n : 0, pst.max_us, __atomic_load_n(&ink_halo, __ATOMIC_RELAXED) ? "on" : "off", pst.halo_n);
                 memset(&pst, 0, sizeof pst);
                 pthread_mutex_unlock(&buf_mu);
+                char kl[2048];                  /* the knobs (epd-knobs.h) as they are now */
+                epd_knobs_line(epd_ctl_knobs, EPD_CTL_KNOBS_N, kl, sizeof kl);
+                fprintf(stderr, "glassine-epdd-desktop: knobs: %s\n", kl);
                 pol.early_cleans = 0; pol.busy_bursts = 0;
                 mo.bursts = mo.shifts = mo.early = 0; shift_n = 0; shift_ms = 0;
                 memset(pol.lvl_n, 0, sizeof pol.lvl_n);

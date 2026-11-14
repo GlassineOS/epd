@@ -52,16 +52,13 @@
  * late frames 2.4 % vs 0.2 %): X, the apps and the grab/composition then run on
  * CPUs that deep-idle between events and ramp from low clocks. qos=cpu:600 / nwork=2
  * added late frames. */
-int epd_stream_nwork = NREND;   /* threads a frame's render/copy is split over, 1..NREND */
+/* epd_stream_nwork: threads a frame's render/copy is split over, 1..NREND */
 /* drive_overlap (epd-drm.h); claim_bands is the
  * engine's epd_claim_bands. Either on: the stream thread at FIFO 51 (above
  * the workers' 50: a band never delays a flip on its CPU) */
-int epd_stream_drive_overlap;
 /* update jobs at SCHED_FIFO (the stream thread at 51 then); the frame
  * workers' policy (epd-drm.h) */
-int epd_stream_upd_fifo;
-int epd_stream_worker_rt;
-int epd_stream_rt_umin = -1;    /* uclamp.min of the stream + worker threads; -1: the
+/* epd_stream_rt_umin: uclamp.min of the stream + worker threads; -1: the
                                    kernel default for RT (sched_util_clamp_min_rt_default) */
 /* warm idle (step 1): after the linger the rails go
  * down but the DRM pipe and the TC358762 bridge stay up this long (ms), so the
@@ -69,11 +66,10 @@ int epd_stream_rt_umin = -1;    /* uclamp.min of the stream + worker threads; -1
  * 0051) instead of a whole modeset + bridge init; then the full link down.
  * 0 = the old behaviour (full down after the linger). Parked (sleep / pause /
  * close): always the full down, at once. */
-int epd_stream_link_warm_ms = 30000;
-int epd_stream_link_log;        /* link_log=on: every link transition with its time (also -v) */
+/* epd_stream_link_log: link_log=on: every link transition with its time (also -v) */
 #define LINK_LOG (epd_stream_verbose || epd_stream_link_log)
 #define LINK_TS() fprintf(stderr, "%.3f ", now())    /* CLOCK_MONOTONIC s (glassine-epdd-desktop's "mark" clock /1000) */
-int epd_stream_qos = -1;        /* CPU wakeup latency hold while the link is up: -1 global
+/* epd_stream_qos: CPU wakeup latency hold while the link is up: -1 global
                                    cpu_dma_latency 0 (every CPU WFI only); -2 none; N >= 0:
                                    only the stream's CPUs (pin_fast_cpus), resume latency
                                    N us (0 = none tolerated) */
@@ -88,7 +84,6 @@ int epd_stream_qos = -1;        /* CPU wakeup latency hold while the link is up:
  * panel came out INVERTED (over-driven). Dry runs also crashed the SoC (900E):
  * a DPU IRQ read unclocked registers while the link cycled (kernel patch 0012).
  * The rows keep the display's own pitch; the GPU sees the buffer flat (epd-gpu.h) */
-int epd_stream_gpu;
 #define GPU_CHECK_EVERY 16       /* check mode: every 16th GPU frame is read back (~7 ms)
                                  * and compared; the CPU still renders every frame */
 #define STR_MS_(x) #x " ms"
@@ -114,7 +109,6 @@ int epd_stream_gpu;
  * GPE_CHECK_EVERY-th claim the whole state read back; a difference turns the
  * gpe off (the CPU's state goes on). gpu=check makes it 2 (the CPU renders
  * from its own arrays then) */
-int epd_stream_gpe;
 #define GPE_CHECK_EVERY 64
 #define GPE_DOWN 1              /* gpe_req: the CPU's arrays from the GPU's state */
 #define GPE_UP 2                /* the GPU's state from the CPU's arrays */
@@ -131,7 +125,6 @@ int epd_stream_gpe;
  * then the engine goes on) or when the targets stopped changing. ctl: the
  * controller (steps only as long as the panel model needs to reach the
  * rail; pay > 0: and DC payback steps of the record >= pay) */
-int epd_stream_stagger;
 /* stagger=check (diagnosis, the inverted URL bar): the CPU
  * reference steps a copy of the stagger's state in lockstep with the GPU
  * (its inputs taken where the GPU's are uploaded); every STG_CHECK_EVERY-th
@@ -139,13 +132,11 @@ int epd_stream_stagger;
  * rows, and at each hand-back the state read back. Differences are logged
  * (up to STG_CHECK_LOG lines a run), nothing is changed. Costs a CPU
  * render of the loaded rows per frame (frames come late: a pause) */
-int epd_stream_stag_check;
 /* stagger_direct=0|1 (-1: GLASSINE_STAG_DIRECT / default 1), live: whether stagger
  * frames image-store into the scanout target (a second texture on the same
  * dma-buf EGLImage) or go through its framebuffer like the engine's frames.
  * the suspect for the stagger's model != panel (the two views
  * alias one buffer behind Mesa's back: one view's caches can hold stale lines) */
-int epd_stream_stag_direct = -1;
 #define STG_CHECK_EVERY 4
 #define STG_CHECK_LOG 12
 /* and every STG_SELF_EVERY-th frame (a compared one) the self-consistency:
@@ -155,30 +146,25 @@ int epd_stream_stag_direct = -1;
  * differ, a pass that differs in the stream) vs a state that drifted from the
  * reference earlier (then: when, from the state compare). ~75 ms a time */
 #define STG_SELF_EVERY 16
-int epd_stream_stag_ctl = 3;          /* stagger_ctl=: 3 = a pulse instead of the idle frame (the default) */
-int epd_stream_stag_k = 8;          /* ctl 3: the most pulses without an idle frame */
-int epd_stream_stag_sidle = 0;      /* ctl 4: stagger_idle=shared (1) | pixel (0) */
-int epd_stream_stag_pay;
+/* epd_stream_stag_ctl: stagger_ctl=: 3 = a pulse instead of the idle frame (the default) */
+/* epd_stream_stag_k: ctl 3: the most pulses without an idle frame */
+/* epd_stream_stag_sidle: ctl 4: stagger_idle=shared (1) | pixel (0) */
 /* payrule 1: the engine's pay-on-arrival (epd-stagger.h; default off), its
  * cap (-1: the engine's matched_cap; 0: none = the most the levels hold) */
-int epd_stream_stag_payrule, epd_stream_stag_cap = -1;
-int epd_stream_stag_stripe = 0;          /* stagger_stripe=: 0 the blue-noise groups (the default), 64 px column stripes (the earlier default) */
-int epd_stream_stag_blocks;              /* stagger_stripe=blocks: the stripes as scattered 64 x 64 blocks (stripe 64; 2, default off) */
-int epd_stream_stag_cellw, epd_stream_stag_cellh;   /* stagger_stripe=cells[W[xH]]: the stripes as blue-noise ranked cells (stripe 64; , default off: 0) */
-int epd_stream_stag_cellord;            /* stagger_stripe=wbayer: 8 x 1 cells in Bayer order (default off: 0 = blue-noise order) */
+/* epd_stream_stag_stripe: stagger_stripe=: 0 the blue-noise groups (the default), 64 px column stripes (the earlier default) */
+/* epd_stream_stag_blocks: stagger_stripe=blocks: the stripes as scattered 64 x 64 blocks (stripe 64; 2, default off) */
+/* epd_stream_stag_cellw, epd_stream_stag_cellh: stagger_stripe=cells[W[xH]]: the stripes as blue-noise ranked cells (stripe 64; , default off: 0) */
+/* epd_stream_stag_cellord: stagger_stripe=wbayer: 8 x 1 cells in Bayer order (default off: 0 = blue-noise order) */
 /* hammer_top=: the rail hammer, an optical reset (epd_stag_par.htop): an
  * arrival at black / white gets 2 frames past its need into the rail. On by
  * default; 0 = off (glassine-settings: Rail hammer) */
-int epd_stream_stag_htop = 2;
-int epd_stream_gpu_hang_test;  /* gpu_hang_test=1: the next GPU frame not waited for = a hang (gpu_revive's test) */
+/* epd_stream_gpu_hang_test: gpu_hang_test=1: the next GPU frame not waited for = a hang (gpu_revive's test) */
 /* stagger_a21=on (ctl 3, default off): A2/1 -- a run's 1-frame steps (A2/2)
  * at G 1 instead of G = n + 1 = 2: every pixel decides on every panel frame
  * (a pulse or an idle; an idle after K pulses), so each pixel follows each
  * new compositor frame at 85 Hz instead of 42.5 */
-int epd_stream_stag_a21;
 /* the stagger stays on this long after the targets last changed (ms): an app
  * draws every few panel frames, a scroll's frames come 30-100 ms apart */
-int epd_stream_stag_linger = 250;
 /* stagger_warm: the entry's state work done while the panel rests. Once the
  * engine is idle after its last update (a page's cleanup settled), the
  * finished words over the whole panel are resolved (D's level := T's, W
@@ -186,7 +172,6 @@ int epd_stream_stag_linger = 250;
  * the next run's start; that start then finds nothing to resolve. The
  * engine reads a finished word's level from T either way, so nothing it
  * sees changes. Any engine update makes it cold again */
-int epd_stream_stag_warm = 1;
 /* stagger_entry=first (1, the default): a scroll's first cut step goes to a
  * warm stagger (lanes, the engine idle, stag_warm done) instead of to the
  * engine, so the run starts at once: no engine cut, no wait for its frames
@@ -195,15 +180,11 @@ int epd_stream_stag_warm = 1;
  * below. engine (0): the engine does the first cut, the stagger takes the
  * next ones once the engine is idle (this was for an entry that cost
  * ~100 ms; it is a few ms when warm) */
-int epd_stream_stag_entry = 1;
 enum { STG_OFF, STG_ON, STG_DRAIN };
 #define STG_HOLD 8                  /* held rects (more: they go to the engine) */
 #define STG_PQ 16                   /* lanes: armed rects waiting for the next upload (more: merged) */
 #define STG_ACK_MAX 64              /* lanes: frames an evict may wait for its acks (then taken over anyway) */
 
-int epd_stream_verbose;
-int epd_stream_jit = 1;
-int epd_stream_jit_size = 1;
 #define JIT_MARGIN 1.5e-3       /* s: render must finish this long before the flip event */
 /* the hand-off inbox. 1: a submit (and the engine
  * knobs the policy sets per update) is a message the drive thread applies at
@@ -211,7 +192,9 @@ int epd_stream_jit_size = 1;
  * direct path (the submitter takes s->mu, which the drive thread holds
  * through epd_schedule: 10-16 ms per hand-off on a scroll). glassine-epdd-desktop
  * handoff=inbox|lock, live */
-int epd_stream_inbox = 1;          /* (default on, after an A/B on the device) */
+/* epd_stream_inbox: (default on, after an A/B on the device) */
+EPD_KNOBS_DRM(EPD_KNOB_DEFINE)     /* (epd-knobs.h: the first values; the comments above say what they do) */
+_Static_assert(NREND == 4, "epd-knobs.h: epd_stream_nwork starts at NREND");
 #define INBOX_N 256             /* messages = EPD_MAX_PENDING (a pen stroke's pieces come ~2-3 a frame; full: the submitter waits) */
 #ifdef EPD_HOST
 void (*epd_stream_host_flip)(uint32_t fb, const uint32_t *words, int lines);

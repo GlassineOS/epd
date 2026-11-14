@@ -14,17 +14,9 @@
 #define PW 1872
 #define PH 1404
 struct epd_stream { uint32_t id; uint8_t *img; epd_stats st; };
-int epd_stream_stag_check;
-int epd_stream_stag_direct = -1;
-int epd_stream_stagger, epd_stream_stag_ctl, epd_stream_stag_pay, epd_stream_stag_linger = 250;
-int epd_stream_stag_payrule, epd_stream_stag_cap = -1;
-int epd_stream_stag_stripe;
-int epd_stream_stag_blocks;
-int epd_stream_stag_cellw, epd_stream_stag_cellh;
-int epd_stream_stag_htop;
-int epd_stream_stag_a21;
-int epd_stream_stag_k = 8;
-int epd_stream_verbose, epd_stream_gpu, epd_stream_gpe, epd_stream_jit = 1, epd_stream_nwork = 4, epd_stream_rt_umin = -1, epd_stream_qos = -1;
+/* epd-drm.c's knobs, from the same list (epd-knobs.h): the daemon sets and
+ * prints them; nothing here reads them */
+EPD_KNOBS_DRM(EPD_KNOB_DEFINE)
 
 static long long ms(void)
 {
@@ -103,16 +95,13 @@ void epd_stream_set_rt_umin(epd_stream *s, int v) { (void)s; (void)v; }
 void epd_stream_set_gt(epd_stream *s, const struct epd_gt_provider *pv) { (void)s; (void)pv; }
 uint32_t epd_stream_submit_gt(epd_stream *s, epd_rect r, int mode, int full, int gt, const uint8_t *grey, int stride)
 { (void)s; (void)r; (void)mode; (void)full; (void)gt; (void)grey; (void)stride; return 0; }
-/* the stall fixes / GPU revive knobs (15): none of them do anything here */
-int epd_stream_gpu_hang_test, epd_stream_jit_size = 1, epd_stream_link_log, epd_stream_link_warm_ms, epd_stream_inbox = 1;
 void epd_stream_park(epd_stream *s, int on) { (void)s; (void)on; }
 /* drive_prof and the stagger cells : nothing to profile or shape here */
 void epd_stream_prof(epd_stream *s, int on, int every_s, const char *csv) { (void)s; (void)on; (void)every_s; (void)csv; }
 void epd_stream_prof_dump(epd_stream *s, const char *path) { (void)s; (void)path; }
 void epd_stream_set_origin(const double *org) { (void)org; }
 int epd_stag_cells_parse(const char *s, int *w, int *h) { (void)s; (void)w; (void)h; return -1; }
-/* (the update job, / switches and the worker policy, as no-ops) */
-int epd_stream_stag_sidle, epd_stream_stag_cellord, epd_stream_drive_overlap, epd_stream_upd_fifo, epd_stream_worker_rt;
+/* (the update job, as no-ops) */
 void epd_stream_s4(epd_stream *s, char *b, size_t n) { (void)s; if (n) b[0] = 0; }
 void epd_stream_upd_run(epd_stream *s, void (*fn)(void *, int), void *arg, int n) { (void)s; for (int k = 0; k < n; k++) fn(arg, k); }
 void epd_stream_set_upd_runner(epd_stream *s, epd_upd_runner run, void *ctx) { (void)s; (void)run; (void)ctx; }

@@ -38,6 +38,22 @@ $B/epd-motion-test
 c -o $B/epd-profpath-test epd-profpath-test.c
 $B/epd-profpath-test
 
+# the knob list (epd-knobs.h): the control lines' parser == the one it replaced (every name and
+# value, random lines), no name the tail of another, the engine's env once at epd_init
+grep -oh '"[a-z0-9_]*=' ../glassine-epdd-desktop.c ../epd-policy.c | tr -d '"' | sort -u > "$V/names"
+c -o $B/epd-knobs-test ../epd-engine.c ../epd-stagger.c epd-knobs-test.c -lpthread
+$B/epd-knobs-test "$WBF" "$V/names"
+# the desktop daemon on the stub (sway's host test links it so, ../../sway/test/host-test.sh EPDD=1):
+# the stub's knobs come from the same list, so it links whatever the daemon sets
+xlibs="-lX11 -lXext -lXdamage -lXfixes -lXi -lXcomposite -lEGL"
+printf '#include <X11/Xlib.h>\n#include <EGL/egl.h>\nint main(void){return 0;}\n' > "$V/x.c"
+if $CC -o "$V/x" "$V/x.c" $xlibs 2>/dev/null; then
+    $CC -O2 -w -o $B/glassine-epdd-desktop-stub ../glassine-epdd-desktop.c ../epd-wl.c ../epd-ingest.c ../epd-policy.c \
+        ../epd-motion.c ../epd-engine.c ../epd-comp.c ../epd-brush.c epd-stream-stub.c $xlibs -lm -lpthread ||
+        { echo "epd-stream-stub: FAIL: the desktop daemon does not link on the stub"; false; }
+    echo "epd-stream-stub: the desktop daemon links on it"
+else echo "epd-stream-stub: skipped (no X11 / EGL to link the daemon)"; fi
+
 # the waveform path of the desktop daemon and the splash: environment, epd.conf, old path
 c -o $B/epd-waveform-test epd-waveform-test.c
 $B/epd-waveform-test

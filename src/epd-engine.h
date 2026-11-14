@@ -26,6 +26,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "epd-knobs.h"      /* the knobs' declarations (epd_claim_kernel, ...) */
 
 #define EPD_W 1872
 #define EPD_H 1404
@@ -260,7 +261,6 @@ typedef struct {
     uint64_t tiles[EPD_TS_N], work[EPD_TS_N];       /* tiles touched / needing the pass */
     uint64_t chg[EPD_TS_N], busy[EPD_TS_N], flash[EPD_TS_N], heal[EPD_TS_N];   /* by first reason */
 } epd_tile_stats;
-extern int epd_tile_stat_on;
 extern epd_tile_stats epd_tile_stat;
 /* (epd-drm.c drive_prof): where epd_schedule's and epd_advance's
  * time goes, summed while epd_sched_prof is set (CLOCK_MONOTONIC, s; the
@@ -274,7 +274,6 @@ typedef struct {
     unsigned long claims, fin_runs;
     unsigned long long px, fin_px;
 } epd_sched_times;
-extern int epd_sched_prof;
 extern epd_sched_times epd_sched_t;
 /* a lazy plan's matched slots, given the cuts its pixels want in the order the
  * lazy pass meets them (raster order): taken as that pass would, then the
@@ -311,13 +310,12 @@ typedef struct epd_pixel_ops {
  * epd_claim_kernel: 0 the arrays' pass (soa, default), 1 the packed pass
  * (packed), 2 both, the arrays' result kept and the packed one compared
  * (check: epd_claim_kernel_diffs); -1 = GLASSINE_CLAIM_KERNEL=soa|packed|check at
- * the first claim. Read at every claim: live. Until the arrays stay the
+ * epd_init. Read at every claim: live. Until the arrays stay the
  * engine's state: the packed pass packs each row of the rect from them and
  * unpacks it back (in L1: the boundary, gone once D/W/T persist). Lazy
  * plans (slots taken in pixel order) and > 4 preemptible runs take the
  * arrays' pass (epd_claim_kernel_soa counts them). */
 #define EPD_PK_IDLE 1023
-extern int epd_claim_kernel;
 extern unsigned long epd_claim_kernel_soa, epd_claim_kernel_diffs;
 static inline uint32_t epd_pk_d(int level, int op, int stale, int dc)
 {
@@ -365,7 +363,6 @@ static inline int epd_pk_lev(uint32_t d, uint16_t w, uint8_t t) { return w == EP
 #define EPD_PK_EVICT 0x80u
 /* stagger_state (epd_stagger_state; -1 = GLASSINE_STAGGER_STATE=lanes at epd_init,
  * else runs; not live): lanes = D and T in dma-bufs (claim_state packed) */
-extern int epd_stagger_state;
 /* DMA_BUF_IOCTL_SYNC over bytes [off, off + len) of fd: the ACK's range
  * ioctl (DMA_BUF_IOCTL_SYNC_PARTIAL) when present (epd_dmabuf_partial: -1
  * not probed, 0 none, 1 used; GLASSINE_DMABUF_PARTIAL=0 never), else the whole
@@ -377,7 +374,6 @@ int epd_dmabuf_sync_at(const char *file, int line, int fd, unsigned flags, size_
  * apart); epd_dmabuf_sync_sites writes one line a site to f (a FILE *), the
  * costliest first, and resets them */
 void epd_dmabuf_sync_sites(void *f);
-extern int epd_dmabuf_partial;
 extern double epd_dmabuf_sync_s;
 extern unsigned long epd_dmabuf_sync_n;
 #define EPD_NPX ((size_t)EPD_W * EPD_H)
@@ -403,23 +399,19 @@ typedef struct epd_pk {
      * a wasted scan). The finish reads only those rows (finish_mask) */
     uint64_t rows[EPD_MAX_UPD][(EPD_H + 63) / 64];
 } epd_pk;
-extern int epd_claim_state;
 /* claim_prefetch (; epd_claim_prefetch, -1 = GLASSINE_CLAIM_PREFETCH=1
- * at the first claim, default off): the in-place claim prefetches row y + 1's
+ * at epd_init, default off): the in-place claim prefetches row y + 1's
  * lines of D, W, T and the target before row y (a device A/B: rows are 7.5 KB
  * apart, a pen rect's rows each start a new stream) */
-extern int epd_claim_prefetch;
-/* finish_mask (; epd_finish_mask, -1 = GLASSINE_FINISH_MASK at the
- * first finish, default 1 = on, 0 = off: every row of the run's rect read):
+/* finish_mask (; epd_finish_mask, -1 = GLASSINE_FINISH_MASK at
+ * epd_init, default 1 = on, 0 = off: every row of the run's rect read):
  * epd_advance's packed finish reads only the rows the run's slot was given
  * pixels in (epd_pk.rows). The same words either way */
-extern int epd_finish_mask;
-/* claim_skip (; epd_claim_skip, -1 = GLASSINE_CLAIM_SKIP=1 at the
- * first claim, default off): the sweep's 16-px step returns early when no
+/* claim_skip (; epd_claim_skip, -1 = GLASSINE_CLAIM_SKIP=1 at
+ * epd_init, default off): the sweep's 16-px step returns early when no
  * lane can change (all idle, not FIN, at their target, no heal candidate; not
  * in a flash plan's kinds): it writes the row buffers' values only. The same
  * words and report either way (a quiet step's full pass stores nothing) */
-extern int epd_claim_skip;
 extern unsigned long epd_claim_state_diffs, epd_claim_state_checked;
 const char *epd_claim_state_name(const epd_engine *e);
 /* the allocation for e->cst (epd_init does it; a calloc'ed engine without
@@ -492,7 +484,7 @@ void epd_claim_merge(const epd_claim_plan *pl, epd_claim_band *const *b, int n, 
  * its rows in N bands (either kernel: the arrays' pass through its own row
  * range, the packed one through epd_claim_rows), merged as one band would
  * make it: the same bytes (test/epd-claim-bench, epd-sched-bench HASH=1).
- * <= 1: one band. -1 (the default) = GLASSINE_CLAIM_BANDS at the first claim, else 4.
+ * <= 1: one band. -1 (the default) = GLASSINE_CLAIM_BANDS at epd_init, else 4.
  * The bands run where epd_set_band_ops says: run(fn, arg, n) = fn(arg, i)
  * for every i, part 0 on the caller, back when all are done; start = the
  * same on other threads, back at once (wait: until they are done; done:
@@ -500,7 +492,6 @@ void epd_claim_merge(const epd_claim_plan *pl, epd_claim_band *const *b, int n, 
  * caller (the same bytes) */
 #define EPD_CLAIM_BANDS_MAX 4
 #define EPD_BAND_MIN_PX 300000L             /* below: one band (the device's pool dispatch ~1.4 ms) */
-extern int epd_claim_bands;
 typedef struct epd_band_ops {
     void (*run)(void *ctx, void (*fn)(void *arg, int i), void *arg, int n);
     void (*start)(void *ctx, void (*fn)(void *arg, int i), void *arg, int n);
@@ -683,7 +674,6 @@ uint8_t *epd_target_make_par(epd_rect *r, const uint8_t *grey, int stride,
  * 128 KB and more are pooled (epd_target_pool of them, 0 = off; default 4)
  * instead of mapped and unmapped per update (musl). epd_target_free takes any
  * malloc block; a pooled one may also go to free. Stats: since the last call */
-extern int epd_target_pool;
 uint8_t *epd_target_alloc(size_t n);
 void epd_target_free(void *p);
 void epd_target_pool_stats(unsigned long *hit, unsigned long *miss, int *kept);

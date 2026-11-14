@@ -23,6 +23,7 @@
 #define EPD_INGEST_H
 #include <stdint.h>
 #include "epd-gtarget.h"
+#include "epd-knobs.h"        /* the knobs' declarations (epd_ingest_kernel, ...) */
 
 typedef struct epd_ingest epd_ingest;
 typedef struct { int x, y, w, h; } epd_ingest_rect;     /* portrait (buffer) pixels */
@@ -84,11 +85,9 @@ int epd_ingest_frame_cpu(epd_ingest *g, int buf, const epd_ingest_rect *r, int n
  * (waited for; a Silver core's invalidate is ~1/3 of a Gold one's),
  * END|READ posted to it, not waited for. t->sync = the wait, read =
  * the convert (+ END when inline) */
-extern int epd_ingest_kernel, epd_ingest_bands, epd_ingest_sync;
 /* ingest_partial: 1 (default) the syncs cover only the rows read
  * (DMA_BUF_IOCTL_SYNC_PARTIAL; the whole buffer on a kernel without it),
  * 0 the whole buffer; -1 unset (GLASSINE_INGEST_PARTIAL=on|off at the first frame) */
-extern int epd_ingest_partial;
 int epd_ingest_kernel_of(const char *s);        /* "row" / "tile" / "scalar" -> 0/1/2 */
 int epd_ingest_sync_of(const char *s);          /* "off" -> -1, "on" -> 0 (cpu 0: a Silver core), "N" -> N */
 void epd_ingest_cpu_switches(int *kernel, int *bands, int *sync);
