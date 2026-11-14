@@ -170,28 +170,25 @@ int epd_stream_gpu_dead(epd_stream *s);
 /* 1 (once): the GPU hung while the engine state was on it; the levels are
  * assumed white now: the caller should flash the whole screen */
 int epd_stream_levels_lost(epd_stream *s);
-extern int epd_stream_verbose;
-extern int epd_stream_gpu;       /* before epd_stream_open: 1 drive frames on the GPU (-DEPD_GPU builds), 2 + checked against the CPU,
+/* epd_stream_gpu: before epd_stream_open: 1 drive frames on the GPU (-DEPD_GPU builds), 2 + checked against the CPU,
                                    3 only the GPU's scanout buffers, the CPU renders (diagnosis) */
-extern int epd_stream_gpe;       /* before epd_stream_open, with epd_stream_gpu 1: the engine's per-pixel state
+/* epd_stream_gpe: before epd_stream_open, with epd_stream_gpu 1: the engine's per-pixel state
                                    on the GPU (1), checked against the CPU's (2); see epd-drm.c */
 /* staggered cut steps (see epd-drm.c; -DEPD_GPU, GPU drive frames,
  * gpe off): 1 on (default 0); ctl 1 the controller, pay its payback threshold */
-extern int epd_stream_stag_check;      /* stagger=check: see epd-drm.c */
-extern int epd_stream_stag_direct;     /* stagger_direct=: see epd-drm.c */
-extern int epd_stream_stagger, epd_stream_stag_ctl, epd_stream_stag_pay, epd_stream_stag_linger, epd_stream_stag_k, epd_stream_stag_sidle;
-extern int epd_stream_stag_payrule, epd_stream_stag_cap;
-extern int epd_stream_stag_warm;                        /* stagger_warm=on|off: see epd-drm.c (stag_warm) */
-extern int epd_stream_stag_entry;                       /* stagger_entry=first|engine: see epd-drm.c (stag_take) */
-extern int epd_stream_stag_stripe;                      /* stagger_stripe= */
-extern int epd_stream_stag_blocks;                      /* stagger_stripe=blocks */
-extern int epd_stream_stag_cellw, epd_stream_stag_cellh;   /* stagger_stripe=cells[W[xH]] */
-extern int epd_stream_stag_cellord;                     /* stagger_stripe=wbayer: EPD_STAG_CORD_WBAYER */
-extern int epd_stream_stag_htop;                        /* hammer_top= */
-extern int epd_stream_gpu_hang_test;                    /* gpu_hang_test=1 (a test of the GPU's revive) */
-extern int epd_stream_stag_a21;                         /* stagger_a21= */
-extern int epd_stream_jit;      /* 1: render each frame just before it is due (default) */
-extern int epd_stream_jit_size; /* 1: its lead by the next frame's size (epd-jit.h, default) / 0: one decaying max */
+/* epd_stream_stag_check: stagger=check: see epd-drm.c */
+/* epd_stream_stag_direct: stagger_direct=: see epd-drm.c */
+/* epd_stream_stag_warm: stagger_warm=on|off: see epd-drm.c (stag_warm) */
+/* epd_stream_stag_entry: stagger_entry=first|engine: see epd-drm.c (stag_take) */
+/* epd_stream_stag_stripe: stagger_stripe= */
+/* epd_stream_stag_blocks: stagger_stripe=blocks */
+/* epd_stream_stag_cellw, epd_stream_stag_cellh: stagger_stripe=cells[W[xH]] */
+/* epd_stream_stag_cellord: stagger_stripe=wbayer: EPD_STAG_CORD_WBAYER */
+/* epd_stream_stag_htop: hammer_top= */
+/* epd_stream_gpu_hang_test: gpu_hang_test=1 (a test of the GPU's revive) */
+/* epd_stream_stag_a21: stagger_a21= */
+/* epd_stream_jit: 1: render each frame just before it is due (default) */
+/* epd_stream_jit_size: 1: its lead by the next frame's size (epd-jit.h, default) / 0: one decaying max */
 /* 1 a submit, a GPU-target submit and
  * the engine knobs (cut, temp, matched, nonblock, model, heal, snap) are
  * messages the drive thread applies in order at the top of its loop; the
@@ -201,7 +198,6 @@ extern int epd_stream_jit_size; /* 1: its lead by the next frame's size (epd-jit
  * inside), epd_stream_submit_gt takes or refuses by the drive thread's last
  * published state, and epd_stream_free_ms reads a published view instead of
  * the engine. 0: the old direct path (live: glassine-epdd-desktop handoff=inbox|lock) */
-extern int epd_stream_inbox;
 #ifdef EPD_HOST
 /* the host harness (-DEPD_HOST, test/epd-stream-test.c): every flipped scanout
  * buffer, every submit message applied (kind: 1 CPU target, 2 GPU target), and
@@ -211,18 +207,17 @@ extern void (*epd_stream_host_applied)(uint32_t id, int kind, epd_rect r);
 extern int epd_stream_host_slow_sched_us;
 #endif
 /* knobs; defaults = the old behaviour (see epd-drm.c) */
-extern int epd_stream_nwork;    /* 1..4 threads per frame's render/copy (default 4) */
-extern int epd_stream_rt_umin;  /* uclamp.min of those threads, -1 = kernel RT default */
-extern int epd_stream_link_log;      /* 1: log every link transition with its time */
-extern int epd_stream_link_warm_ms;  /* warm idle after the linger (rails down, link up), ms; 0 off */
-extern int epd_stream_qos;      /* -1 global cpu_dma_latency 0; -2 none; N: stream CPUs only, N us */
+/* epd_stream_nwork: 1..4 threads per frame's render/copy (default 4) */
+/* epd_stream_rt_umin: uclamp.min of those threads, -1 = kernel RT default */
+/* epd_stream_link_log: 1: log every link transition with its time */
+/* epd_stream_link_warm_ms: warm idle after the linger (rails down, link up), ms; 0 off */
+/* epd_stream_qos: -1 global cpu_dma_latency 0; -2 none; N: stream CPUs only, N us */
 void epd_stream_set_rt_umin(epd_stream *s, int v);     /* applies to the running threads */
 /* drive_overlap 1 = the engine's
  * epd_set_overlap(1): big claims go out as a job on the workers, effective
  * two frames on, the stream thread never waits for one (default 0; read at
  * the stream thread's loop top). With it or the engine's epd_claim_bands > 1
  * the stream thread runs at FIFO 51. epd_stream_s4: the counters as a line */
-extern int epd_stream_drive_overlap;
 void epd_stream_s4(epd_stream *s, char *b, size_t n);
 
 /* the update job.
@@ -241,7 +236,6 @@ typedef void (*epd_upd_runner)(void *ctx, void (*fn)(void *, int), void *arg, in
 void epd_stream_set_upd_runner(epd_stream *s, epd_upd_runner run, void *ctx);
 #define EPD_UPD_LEVELS_PX (256 * 1024)
 #define EPD_UPD_LEVELS_PARTS 16
-extern int epd_stream_upd_fifo;
 /* jobs run, parts taken by workers / by the caller, jobs refused (busy: serial) */
 void epd_stream_upd_stats(epd_stream *s, unsigned long long *jobs, unsigned long long *wparts,
                           unsigned long long *cparts, unsigned long long *serial);
@@ -249,7 +243,6 @@ void epd_stream_upd_stats(epd_stream *s, unsigned long long *jobs, unsigned long
  * SCHED_OTHER nice EPD_WORKER_NICE (rt_umin then not applied: a CFS thread
  * keeps the CFS default clamp). Live: a worker re-applies it at its next job */
 #define EPD_WORKER_NICE (-10)
-extern int epd_stream_worker_rt;
 
 /* the drive thread's per-frame timing, default off
  * (off: a branch on the drive thread's own flag per timed spot). on: 1 / 0 /

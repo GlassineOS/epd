@@ -16,6 +16,7 @@ track of what the panel shows.
 | `src/epd-policy.c`, `src/epd-motion.c` | the refresh policy: which mode, when to clean up, motion |
 | `src/epd-ingest.c`, `src/epd-wl.c`, `src/epd-comp.c` | frame ingest: from the Wayland compositor's e-ink output backend, or as the X compositing manager |
 | `src/epd-brush.c` | pen preview brushes |
+| `src/epd-knobs.h`, `src/epd-knobs-ctl.h` | the one list of the engine's, drive's, GPU's and ingest's runtime knobs (their globals, first values, control names, `GLASSINE_*` variables) and the daemon's parser over it |
 | `src/glassine-epdd.c` | **glassine-epdd**: the recovery's panel daemon (CPU engine, static, no GPU) |
 | `src/glassine-epdd-desktop.c` | **glassine-epdd-desktop**: the desktop session's panel daemon (GPU engine) |
 | `src/glassine-epd-show.c` | **glassine-epd-show**: shows a PGM on the panel (boot splash) |

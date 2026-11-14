@@ -52,7 +52,6 @@ int epd_gpu_pack_state(uint16_t *s, const epd_engine *e, epd_rect *r);
  * at epd_gpu_open; heap falls back to tex when the import fails. The same
  * frames either way. GLASSINE_DRIVE_STATE_FMT=8888: W as ABGR8888 (4 fetches a
  * word, the R2 fallback) instead of ABGR16161616 (2) */
-extern int epd_gpu_drive_state;
 const char *epd_gpu_drive_state_of(const epd_gpu *g);   /* "tex", or W's format + source */
 /* Frames go into targets: 0 = a texture of the GPU's own (epd_gpu_open), more
  * from dma-bufs of EPD_LINE x EPD_LINES 32-bit words, rows pitch bytes apart
@@ -116,8 +115,7 @@ void epd_gpu_gpe_drive(epd_gpu *g, int on);
  * each pass and its seconds added to epd_gpu_prof[pass] */
 enum { EPD_GPU_PROF_UPLOAD, EPD_GPU_PROF_PROBE, EPD_GPU_PROF_CLAIM, EPD_GPU_PROF_REDUCE, EPD_GPU_PROF_WAIT,
        EPD_GPU_PROF_READ, EPD_GPU_PROF_FIN, EPD_GPU_PROF_QUERY, EPD_GPU_PROF_N };
-extern int epd_gpu_prof_on;
-extern int epd_gpu_gpe_debug;        /* every gpe pass finished + GL errors printed, the limits at open */
+/* epd_gpu_gpe_debug: every gpe pass finished + GL errors printed, the limits at open */
 extern void (*epd_gpu_gpe_debug_hook)(const char *what);   /* with it: called after each finished pass */
 /* the gpe's compute shape, chosen at epd_gpu_gpe_open from the environment:
  * GLASSINE_GPE_RPT (pixels per invocation, 1..32), GLASSINE_GPE_GATOM (1: the claim and
@@ -131,7 +129,7 @@ extern void (*epd_gpu_gpe_debug_hook)(const char *what);   /* with it: called af
  * mapped per read" without the persistent map) */
 const char *epd_gpu_gpe_shape(const epd_gpu *g);
 int epd_gpu_gpe_selftest(epd_gpu *g);    /* the reduce pass on known partials (device check), 0 ok */
-extern int epd_gpu_gpe_noatom;       /* timing experiment: the claim's per-pixel shared atomics off (wrong results) */
+/* epd_gpu_gpe_noatom: timing experiment: the claim's per-pixel shared atomics off (wrong results) */
 extern double epd_gpu_prof[EPD_GPU_PROF_N];
 /* the whole state (tests; waits) */
 void epd_gpu_gpe_read(epd_gpu *g, uint8_t *level, uint8_t *target, uint8_t *busy, uint8_t *op, int16_t *dc, uint8_t *stale);
@@ -168,15 +166,12 @@ int epd_gpu_stag_load_err(epd_gpu *g);  /* the last load upload's glGetError (0:
 /* the tile skip: a workgroup tile with no work for G frames, no target or
  * state change and the same params skips the pass (its no-drive output
  * only); exact (the same state as without). 1 on, 0 off, -1: GLASSINE_STAG_TSKIP */
-extern int epd_gpu_stag_tskip;
 /* LEAD : each stagger compute pass one leading workgroup row
  * into scratch rows (the A509's lost wave lands there). 1 on, 0 off, -1:
  * GLASSINE_STAG_LEAD (default off); read at epd_gpu_stag_open (the scratch rows) */
-extern int epd_gpu_stag_lead;
 /* cells (epd_stag_par.cellw) with SWY 64: a tile's cells run in
  * rank order (a wave one group). 1 on, 0 in place (timing), -1: GLASSINE_STAG_CREMAP
  * (default on); the same results either way */
-extern int epd_gpu_stag_cremap;
 /* frames straight into the target's image (1, GLASSINE_STAG_DIRECT default) or
  * through the words texture and an emit pass into its framebuffer (0) */
 void epd_gpu_stag_set_direct(epd_gpu *g, int on);
@@ -207,7 +202,6 @@ extern double epd_gpu_bp4_ms[4];
  * GPU ms to epd_gpu_stag_ms[0], [1]; [2] counts the frames. A frame goes
  * straight into its target (image stores, GL_EXT_EGL_image_storage) once the
  * target was drawn whole; GLASSINE_STAG_DIRECT=0: through the template pass */
-extern int epd_gpu_stag_timer;
 extern double epd_gpu_stag_ms[3];
 
 #endif
