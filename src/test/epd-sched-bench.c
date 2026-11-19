@@ -17,7 +17,12 @@
  * page's antialiased greys make ~70 % of the claimed pixels DU ones); `mix` = a grey page (gradients, grey
  * blocks) and the modes cycled (A2_OR_DU cut, plain A2 cut and uncut, DU,
  * partial GC16, a flash now and then): the claim pass's fallbacks (non-bw
- * pixels, matched cuts, preempts) covered. HASH=1: every drive frame is
+ * pixels, matched cuts, preempts) covered; `du` = a slowly scrolled browser
+ * page as on the device (the pile-up of the 2-4 s late taps): ~1.5 Mpx plain DU
+ * every 4 frames (~50 ms) from one frame buffer (a shadow, as the daemon's),
+ * the rects' x and width changing (full height), a GC16 cleanup every 25th and
+ * a tap's 22 x 22 DU every 9th; `du-a2` the same with the device's cut A2/2
+ * steps (A2_OR_DU) instead of DU. HASH=1: every drive frame is
  * rendered and hashed (FNV-1a 64 over the words), the engine state (busy,
  * target, level, dc, op, stale, the runs, the counters) every 8th frame and
  * at the end: one line "hash <16 hex>" that an optimization of the pass must
@@ -197,6 +202,13 @@ int main(int argc, char **argv)
     int dohash = getenv("HASH") != NULL;
     FILE *hv = dohash && getenv("HASHV") ? fopen(getenv("HASHV"), "w") : NULL;   /* (the running hash per frame: where it diverges) */
     int bw = argc > 4 && !strcmp(argv[4], "bw");
+    int du = argc > 4 && !strncmp(argv[4], "du", 2), du_a2 = du && !strcmp(argv[4], "du-a2");
+    static uint8_t shadow[EPD_W * EPD_H];      /* (du: the one buffer every update is taken from) */
+    /* du: the taps' squares stay in the shadow (black / white in turn); a tap's
+     * latency = drive frames from its submit until its centre shows it, idle */
+    epd_rect tap = { 0, 0, 0, 0 };
+    int tap_v = 255, tap_f = -1, ntap = 0, tap_max = 0, tap_miss = 0;
+    long tap_sum = 0;
     if (mix) setenv("MIXPAGE", "1", 1);
     if (bw) setenv("BWPAGE", "1", 1);
     size_t wn;
@@ -258,6 +270,19 @@ int main(int argc, char **argv)
             }
             const uint8_t *g = page + (size_t)off * EPD_W - (size_t)win.y * EPD_W + win.x;
             epd_rect r = win;
+            if (du) {                                   /* the page scrolled into the shadow, a rect of it */
+                for (int y = 0; y < EPD_H; y++) memcpy(shadow + (size_t)y * EPD_W, page + (size_t)(off + y) % PAGE_H * EPD_W, EPD_W);
+                if (nsub % 9 == 8) { tap_miss += tap_f >= 0; tap = (epd_rect){ 600 + (int)(nsub % 7) * 30, 700, 22, 22 }; tap_v ^= 255; tap_f = f; }
+                for (int y = 0; y < tap.h; y++) memset(shadow + (size_t)(tap.y + y) * EPD_W + tap.x, tap_v, (size_t)tap.w);
+                g = shadow;
+                static const int ws[] = { 1064, 1352, 1064, 1516 };
+                int x = (int)(nsub % 5) * 3;
+                r = (epd_rect){ x, 0, ws[nsub % 4] - x, EPD_H };
+                mode = du_a2 ? EPD_MODE_A2LEN(EPD_A2_OR_DU, 2) : EPD_DU;
+                full = 0;
+                if (nsub % 25 == 24) { mode = EPD_GC16; full = 2; }
+                if (nsub % 9 == 8) { r = tap; mode = du_a2 ? EPD_MODE_A2LEN(EPD_A2_OR_DU, 0) : EPD_DU; }
+            }
             double t0 = now();
             uint8_t *t = epd_target_make(&r, g, EPD_W);
             double tm = now();
@@ -283,20 +308,40 @@ int main(int argc, char **argv)
         if (t2 - ta > adv_max) adv_max = t2 - ta;
         if (t1 - t0 > sched_max) sched_max = t1 - t0;
         if (E.npend > maxpend) maxpend = E.npend;
+        if (tap_f >= 0) {
+            size_t c = (size_t)(tap.y + tap.h / 2) * EPD_W + tap.x + tap.w / 2;
+            if (!epd_px_busy(&E, c) && epd_px_level(&E, c) == (tap_v & 0xF0) >> 3) {
+                int d = f + 1 - tap_f;
+                tap_sum += d; ntap++;
+                if (d > tap_max) tap_max = d;
+                tap_f = -1;
+            }
+        }
         if (dohash && f % 8 == 7 && !epd_job_out(&E)) hash_state();
     }
     if (epd_job_join(&E) && dohash) hash(&frames, sizeof frames);     /* (one out at the end: applied, marked) */
+    if (du) {                                   /* drained: the panel shows the shadow where every rect was */
+        for (int k = 0; k < 4000 && (epd_schedule(&E) || !epd_idle(&E)); k++) epd_advance(&E, NULL, NULL);
+        static uint8_t lv[EPD_NPX];
+        epd_state_get(&E, lv, NULL, NULL, NULL, NULL, NULL);
+        long bad = 0;
+        for (int y = 0; y < EPD_H; y++)
+            for (int x = 12; x < 1064; x++) bad += lv[(size_t)y * EPD_W + x] != (shadow[(size_t)y * EPD_W + x] & 0xF0) >> 3;
+        printf("du: drained, %ld of %d px differ from the last image (x 12..1063); taps shown %d (%d never: the next tap came first), after %.1f drive frames avg, max %d (%.0f / %.0f ms at 85 Hz)\n",
+               bad, 1052 * EPD_H, ntap, tap_miss, ntap ? (double)tap_sum / ntap : 0, tap_max, ntap ? tap_sum * 1e3 / 85 / ntap : 0, tap_max * 1e3 / 85);
+    }
     if (effective || E.banded)
         printf("S4: %llu banded claims; %llu jobs, late %llu, slipped %llu, joined %llu, queued finishes %llu; apply %.3f ms avg (max %.2f)\n",
                (unsigned long long)E.banded, (unsigned long long)E.jobs, (unsigned long long)E.job_late,
                (unsigned long long)E.job_slip, (unsigned long long)E.job_joins, (unsigned long long)E.job_qfin,
                E.jobs ? E.job_apply_s * 1e3 / (double)E.jobs : 0, E.job_apply_max * 1e3);
     printf("%s%s: %ld updates in %d frames; per frame: schedule %.3f ms (max %.2f), advance %.3f ms (max %.2f); "
-           "per update: target copy %.2f ms, submit %.2f ms (max %.2f); waits order %llu pixel %llu slot %llu, peak pend %ld, superseded %llu\n",
+           "per update: target copy %.2f ms, submit %.2f ms (max %.2f); waits order %llu pixel %llu slot %llu, peak pend %ld, superseded %llu merged %llu absorbed %llu\n",
            flood ? "flood" : "paced", payback ? " payback" : "", nsub, frames, t_sched * 1e3 / frames, sched_max * 1e3,
            t_adv * 1e3 / frames, adv_max * 1e3, nsub ? t_make * 1e3 / nsub : 0,
            nsub ? t_sub * 1e3 / nsub : 0, sub_max * 1e3, (unsigned long long)E.wait_order, (unsigned long long)E.wait_pixel,
-           (unsigned long long)E.wait_slot, maxpend, (unsigned long long)E.superseded);
+           (unsigned long long)E.wait_slot, maxpend, (unsigned long long)E.superseded,
+           (unsigned long long)E.merged, (unsigned long long)E.absorbed);
     if (getenv("GLASSINE_CLAIM_KERNEL"))             /* (the claims the packed pass left to the arrays', and check's differences) */
         printf("claim_kernel %s: %lu claims on the arrays' pass (lazy / npre > 4), %lu differ\n", getenv("GLASSINE_CLAIM_KERNEL"),
                epd_claim_kernel_soa, epd_claim_kernel_diffs);

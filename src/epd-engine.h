@@ -11,7 +11,9 @@
  * - updates on disjoint pixels run concurrently, one shared drive frame;
  * - an update touching pixels still in flight waits until they are done
  * and never overtakes an earlier pending update
- * it overlaps;
+ * it overlaps; a new update takes in the pending ones it overlaps that have
+ * not started (the fold, epd_submit: one update per area waits, the
+ * strongest mode, the panel as the queue would have ended);
  * - per pixel: index = (new << 5) | old (5-bit levels, new = (grey >> 4) * 2),
  * phase = LUT[frame][index], LUT diagonal zeroed (unchanged = never driven).
  * The caller renders one drive frame at a time into a 285 x 1423 word buffer
@@ -137,7 +139,7 @@ typedef struct {
     int npend;
     uint32_t next_id;
     uint64_t superseded;                    /* pending updates dropped, see epd_submit */
-    uint64_t merged;                        /* submits merged into a pending update */
+    uint64_t merged;                        /* submits merged into a pending update, pending ones folded into a submit */
     /* why pending updates waited (per epd_schedule pass and update): an earlier
      * overlapping pending one / a pixel in flight elsewhere / no free run slot */
     uint64_t wait_order, wait_pixel, wait_slot;
