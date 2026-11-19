@@ -70,6 +70,11 @@ if real epd-matched; then  # the matched-cut model's settling and DC figures
 fi
 c -I.. -o $B/epd-flash-test ../epd-engine.c epd-flash-test.c
 $B/epd-flash-test "$WBF" >/dev/null && echo "epd-flash: ok"
+# the fold (submit): overlapping not started updates collapse into one, the panel as the queue would end
+c -I.. -o $B/epd-fold-test ../epd-engine.c epd-fold-test.c
+for pb in - payback; do
+    $B/epd-fold-test "$WBF" $pb > "$V/fold.log" && tail -1 "$V/fold.log" || { grep -v '^ok' "$V/fold.log"; false; }
+done
 c -I.. -o $B/epd-greystart-test ../epd-engine.c epd-greystart-test.c
 $B/epd-greystart-test "$WBF"
 c -o $B/epd-defer-test ../epd-engine.c epd-defer-test.c

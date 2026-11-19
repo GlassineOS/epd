@@ -656,11 +656,18 @@ static int min_gap(const policy *p, int64_t now)
 
 /* ms until a burst may be read (0 = now): the gap since the last one and, in an
  * engine-paced run, until the engine can start it — read earlier, the frame
- * waits in the queue and is replaced by the next one (or shows old content) */
+ * waits in the queue and is replaced by the next one (or shows old content).
+ * The engine's wait holds a read at most ENG_PACE_MAX_MS after the last one:
+ * eng_wait is re-asked every loop, and a queue draining behind the window
+ * kept it > 0 for 25 s (Chromium's launch, 11-19: no read, sway unanswered,
+ * every tap late); a read then folds into the update still waiting there */
 static int hold_ms(const policy *p, int64_t now)
 {
     int64_t w = min_gap(p, now) - (now - p->last_burst);
-    if (engine_paced(p) && p->eng_wait > w) w = p->eng_wait;
+    if (engine_paced(p) && p->eng_wait > w) {
+        int64_t cap = ENG_PACE_MAX_MS - (now - p->last_burst);
+        w = p->eng_wait < cap ? p->eng_wait : cap;
+    }
     return w > 0 ? (int)w : 0;
 }
 static int throttled(const policy *p, int64_t now) { return hold_ms(p, now) > 0; }

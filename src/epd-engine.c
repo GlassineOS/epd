@@ -827,6 +827,137 @@ static void drop_new(epd_engine *e, uint8_t *t, int gt)
     if (gt && e->tops && e->tops->release) e->tops->release(e->tops->ctx, gt);
 }
 
+/* the fold's order of the modes, by what a waveform can show (0: unknown, never folded):
+ * the 16-level exact ones, DU4's 4 levels, DU (any level), A2 where black/white -> black/white
+ * else DU, A2 (black/white only). Same rank = same base, or GC16/GL16 */
+static int fold_rank(int mode)
+{
+    switch (EPD_MODE_BASE(mode)) {
+    case EPD_INIT: return 6;
+    case EPD_GC16: case EPD_GL16: return 5;
+    case EPD_DU4: return 4;
+    case EPD_DU: return 3;
+    case EPD_A2_OR_DU: return 2;
+    case EPD_A2: return 1;
+    }
+    return 0;
+}
+static long rect_area(epd_rect a) { return (long)a.w * a.h; }
+static epd_rect rect_box(epd_rect a, epd_rect b)
+{
+    int x0 = a.x < b.x ? a.x : b.x, y0 = a.y < b.y ? a.y : b.y;
+    int x1 = a.x + a.w > b.x + b.w ? a.x + a.w : b.x + b.w, y1 = a.y + a.h > b.y + b.h ? a.y + a.h : b.y + b.h;
+    return (epd_rect){ x0, y0, x1 - x0, y1 - y0 };
+}
+static epd_rect rect_and(epd_rect a, epd_rect b)        /* (w or h <= 0: none) */
+{
+    int x0 = a.x > b.x ? a.x : b.x, y0 = a.y > b.y ? a.y : b.y;
+    int x1 = a.x + a.w < b.x + b.w ? a.x + a.w : b.x + b.w, y1 = a.y + a.h < b.y + b.h ? a.y + a.h : b.y + b.h;
+    return (epd_rect){ x0, y0, x1 - x0, y1 - y0 };
+}
+static int rect_within(epd_rect a, epd_rect b)          /* a inside b */
+{
+    return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+}
+
+/* The fold: a new update takes in every pending one it overlaps that has not
+ * started driving (not kept, not out as a job), so at most one update per area
+ * waits. Without it a stream of overlapping updates of other rects or modes
+ * (a slowly scrolled page: ~1.5 Mpx every 50 ms, the rects' widths changing,
+ * DU, cut A2 and a GC16 now and then) queued one behind the other — the
+ * scheduler never lets one overtake an earlier overlapping one — 57 pending,
+ * a tap's repaint 2-4 s late. The folded update is the new one, at the
+ * queue's end:
+ * - rect: the box of the folded rects (closed: a pending the box reaches is
+ * taken in too). Box pixels no folded rect covers (the gap): at most 1/8 of
+ * the box — the box waits for whatever runs over it, the gap made it wait
+ * for runs neither rect had (rects that meet at a corner stay apart);
+ * - content: when every folded one is of grey's buffer (grey, stride: the
+ * daemon's shadow), grey's newest image over the box (as the absorb and the
+ * merge; the same bytes with CPU or GPU targets, so both engines stay equal).
+ * Else (another buffer, no gap) the folded targets oldest first, the new
+ * one's over them = per pixel the newest update covering it, what the queue
+ * would have shown in the end; nothing fetched from the GPU for it (a
+ * GPU-only pending of another buffer folds only where the new rect covers it
+ * whole);
+ * - mode: the strongest (fold_rank); same rank: the newest (two cut A2
+ * steps: the newest length, as the absorb). Flags: none < flash < full.
+ * A not started pending holds no credit (matched cuts, payback, heal, the DC
+ * record and the panel model are all decided at its claim), so the folded
+ * one's claim decides them for the whole box as for any update.
+ * - order: a pending left out (kept, a job, or not foldable) that overlaps the
+ * box outside the new rect would see the folded content move behind it: then
+ * nothing is folded (the old queue; the next submit tries again).
+ * Running updates are never touched. Counts: merged, one per folded pending.
+ * The new update's t / gt are replaced (or kept when the box is its rect). */
+static void fold(epd_engine *e, epd_rect *rp, int *modep, int *fullp, int *flashp, uint8_t **tp, int *gtp,
+                 const uint8_t *grey, int stride)
+{
+    const epd_rect r0 = *rp;
+    if (!e->npend || !fold_rank(*modep)) return;
+    uint8_t in[EPD_MAX_PENDING];
+    memset(in, 0, (size_t)e->npend);
+    epd_rect U = r0;
+    long gap = 0;
+    /* same: every folded one the new rect doesn't cover is of grey's buffer
+     * (the box's content: grey) — else composed from the targets (the CPU's) */
+    int n = 0, same = grey != NULL;
+    for (int grew = 1; grew;) {
+        grew = 0;
+        for (int i = 0; i < e->npend; i++) {
+            const epd_pend *q = &e->pend[i];
+            if (in[i] || q->job || q->kept || !fold_rank(q->mode) || !overlap(q->r, U)) continue;
+            int inside = rect_within(q->r, r0);
+            int sq = same && (inside || (q->src == grey && q->stride == stride));
+            /* not of grey's buffer: composed, so its target and the new one's on the CPU, and no gap */
+            if (!sq && (!inside && (!q->target || !*tp))) continue;
+            epd_rect b = rect_box(U, q->r), c = rect_and(U, q->r);
+            long g = gap + rect_area(b) - (rect_area(U) + rect_area(q->r) - rect_area(c));
+            if (g > 0 && (!sq || g * 8 > rect_area(b))) continue;
+            in[i] = 1; n++; same = sq; gap = g; U = b; grew = 1;
+        }
+    }
+    if (!n) return;
+    for (int i = 0; i < e->npend; i++) {        /* the order: nothing left out over the box outside r0 */
+        if (in[i] || !overlap(e->pend[i].r, U)) continue;
+        if (!rect_within(rect_and(e->pend[i].r, U), r0)) return;
+    }
+    uint8_t *ut = NULL;
+    if (U.w != r0.w || U.h != r0.h) {           /* (else the new target is the box's) */
+        if (!(ut = epd_target_alloc((size_t)U.w * U.h))) return;
+        if (same)                               /* one buffer: its newest image (as the absorb; the same */
+            for (int y = 0; y < U.h; y++)       /* bytes whether the targets are the CPU's or the GPU's) */
+                levels_of(ut + (size_t)y * U.w, grey + (size_t)(U.y + y) * stride + U.x, U.w);
+        else {                                  /* composed: oldest first, the new one's over them */
+            for (int i = 0; i < e->npend; i++) {
+                const epd_pend *q = &e->pend[i];
+                if (!in[i] || rect_within(q->r, r0)) continue;
+                for (int y = 0; y < q->r.h; y++)
+                    memcpy(ut + (size_t)(q->r.y - U.y + y) * U.w + (q->r.x - U.x), q->target + (size_t)y * q->r.w, (size_t)q->r.w);
+            }
+            for (int y = 0; y < r0.h; y++)
+                memcpy(ut + (size_t)(r0.y - U.y + y) * U.w + (r0.x - U.x), *tp + (size_t)y * r0.w, (size_t)r0.w);
+        }
+    }
+    int mode = -1, lv = 0;                      /* (-1: rank 0) lv: 0 partial, 1 flash, 2 full */
+    for (int i = 0; i <= e->npend; i++) {
+        if (i < e->npend && !in[i]) continue;
+        int m = i < e->npend ? e->pend[i].mode : *modep;
+        int l = i < e->npend ? (e->pend[i].full ? e->pend[i].flash ? 1 : 2 : 0) : (*fullp ? *flashp ? 1 : 2 : 0);
+        if (fold_rank(m) >= fold_rank(mode)) mode = m;
+        if (l > lv) lv = l;
+    }
+    int k = 0;
+    for (int i = 0; i < e->npend; i++) {
+        if (in[i]) { pend_drop(e, &e->pend[i]); e->merged++; continue; }
+        if (k != i) e->pend[k] = e->pend[i];
+        k++;
+    }
+    e->npend = k;
+    if (ut) { drop_new(e, *tp, *gtp); *tp = ut; *gtp = 0; }
+    *rp = U; *modep = mode; *fullp = lv != 0; *flashp = lv == 1;
+}
+
 static uint32_t submit(epd_engine *e, epd_rect r, int mode, int full, uint8_t *t, int gt, const uint8_t *grey, int stride)
 {
     if (!clip(&r) || e->npend >= EPD_MAX_PENDING) { drop_new(e, t, gt); return 0; }
@@ -876,6 +1007,7 @@ static uint32_t submit(epd_engine *e, epd_rect r, int mode, int full, uint8_t *t
         e->npend--;
         e->superseded++;
     }
+    fold(e, &r, &mode, &full, &flash, &t, &gt, grey, stride);
     /* merge: a pen stroke arrives as a stream of small touching pieces; queued one by
      * one, each waits for the previous (they overlap) and the line oozes out in blobs.
      * So grow the newest still-pending update of the same kind that the piece touches

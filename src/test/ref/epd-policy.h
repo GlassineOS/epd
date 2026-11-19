@@ -160,6 +160,7 @@ enum { BUSY_AUTO = 0, BUSY_ON = 1, BUSY_OFF = 2 };
 #define WIN_MIN 16              /* smaller windows (1-pixel helpers) don't count */
 #define RUN_FLOOR_MS 24         /* pace=engine: bursts at least this far apart (two drive frames) */
 #define ENG_HOLD_MAX_MS 1500    /* pace=engine: a run's quiet starts when the engine is free, at most this long after the last damage */
+#define ENG_PACE_MAX_MS 1000    /* pace=engine: the engine's wait holds a read at most this long after the last one */
 #define POPUP_MS 1000           /* a popup mapped this recently paints fast (pol_popup) */
 #define POPUP_BESIDE 16384      /* px: changes outside the popup that still ride its paint */
 #define GTW ((1404 + GTILE - 1) / GTILE)

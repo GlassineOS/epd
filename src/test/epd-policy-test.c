@@ -518,6 +518,54 @@ static void scenario_pace(void)
     }
 }
 
+/* pace=engine with the engine's area busy for good (a queue draining behind
+ * the window: Chromium's launch, the device log's 25 s with no read): sway's
+ * frame every 2 s (its DONE timeout), a tap every 500 ms. Every frame is read
+ * at most ENG_PACE_MAX_MS after the last read (the frozen policy: none in 25 s),
+ * and pol_timeout wakes the loop for it */
+static void scenario_engine_stall(void)
+{
+    policy p; pol_init(&p, W, H);
+    int64_t now = 1000;
+    journal *j = calloc(1, sizeof *j);
+    idle_until(&p, &now, 2000, j);
+    box ff = { 0, 104, W, H };
+    int64_t first = 0, free_at = 0, last_read = 0, gap_max = 0, wake_max = 0;
+    int pend = 0, stall = 0;
+    for (int64_t end = now + 27000; now < end; now += 1) {
+        if (now % 500 == 0) pol_input(&p, now);
+        int dmg = now < 3000 ? now % 20 == 0 : now % 2000 == 0;   /* a run first, then the stall */
+        if (now == 3000) free_at = now + 25000;                  /* the engine busy there from now on */
+        if (dmg) { if (!pend) first = now; pend++; pol_damage(&p, now); }
+        pol_engine(&p, p.state == S_RUN && pend ? (free_at > now ? (int)(free_at - now) : 0) : -1);
+        if (pend && now >= 3000 && now < free_at) {
+            int t = pol_timeout(&p, now, 0, pend);
+            if (now + t - (last_read > first ? last_read : first) > wake_max) wake_max = now + t - (last_read > first ? last_read : first);
+        }
+        actions o = {0};
+        int st = pol_step(&p, now, 0, pend, first, &o);
+        jadd(j, &o);
+        if (st == STEP_BURST) {
+            if (now >= 3000 && now < free_at) {
+                stall++;
+                if (now - first > gap_max) gap_max = now - first;
+            }
+            boxlist ch = one((box){ 0, 104, W, H });
+            actions b = {0};
+            burst_in in = { now, ch, ff, PM_FAST, 0, 0, BUSY_AUTO, 0, 0, 1, 0 };
+            pol_burst(&p, &in, &b);
+            jadd(j, &b);
+            if (free_at <= now) free_at = now + 113;
+            last_read = now;
+        }
+        if (st != STEP_NONE) pend = 0;
+    }
+    CHECK(stall >= 11, "engine stall: %d of the 12 frames read while the engine stayed busy", stall);
+    CHECK(gap_max <= ENG_PACE_MAX_MS + COALESCE_MS, "engine stall: a frame waited %lld ms for its read", (long long)gap_max);
+    CHECK(wake_max <= ENG_PACE_MAX_MS + COALESCE_MS, "engine stall: pol_timeout slept to %lld ms after the damage", (long long)wake_max);
+    free(j);
+}
+
 /* motion=adaptive: a run with the finger at speed(t) screens/s (finger down
  * until lift_ms, then a fling), damage every 20 ms until end_ms; each run
  * burst's step goes to lv[] (from its sends). Returns the number of bursts;
@@ -2754,6 +2802,7 @@ int main(void)
     scenario_still_range();
     scenario_throttle();
     scenario_pace();
+    scenario_engine_stall();
     scenario_adaptive();
     scenario_run_end();
     scenario_run_tail();

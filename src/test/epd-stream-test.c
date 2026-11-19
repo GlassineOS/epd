@@ -112,7 +112,7 @@ static void on_flip(uint32_t fb, const uint32_t *w, int lines)
     const uint8_t *b = (const uint8_t *)w;
     for (size_t i = 0; i < (size_t)lines * EPD_LINE * 4; i++) { h ^= b[i]; h *= 1099511628211ull; }
     if (nhash < HMAX) hashes[nhash] = h;
-    nhash++;
+    __atomic_add_fetch(&nhash, 1, __ATOMIC_RELEASE);
 }
 
 /* the applied hook: ids and rects in order, the time of the last one */
@@ -164,10 +164,17 @@ static epd_stream *hopen(const char *wbf, int inbox)
  * the first submit woke the thread, whose schedule held the next ones one
  * frame; on the inbox path they drained together — a race both paths have,
  * with a smaller window on the inbox path) */
+/* a GC16 the next submits wait behind: running when blocker returns (two flips
+ * later: a schedule saw it), else they would fold it in (epd_submit's fold
+ * takes a pending one that has not started) and the scene's outcome would
+ * depend on the drive thread's timing */
 static void blocker(epd_stream *s, epd_rect r)
 {
     hfill(r, 0x80);
+    int n0 = __atomic_load_n(&nhash, __ATOMIC_ACQUIRE);
     epd_stream_submit(s, r, EPD_GC16, 0, grey, EPD_W);
+    struct timespec ts = { 0, 1000000 };
+    for (int k = 0; k < 2000 && __atomic_load_n(&nhash, __ATOMIC_ACQUIRE) < n0 + 2; k++) nanosleep(&ts, NULL);
 }
 
 static void scene_frames(epd_stream *s)
@@ -285,7 +292,12 @@ static void update_suite(const char *wbf)
             /* the sends: the changed boxes' union behind a blocker, then each box */
             box u = { 0 };
             for (int i = 0; i < ch.n; i++) u = box_union(u, ch.b[i]);
-            if (!box_empty(u)) epd_stream_submit(s, (epd_rect){ PW - u.y1, u.x0, u.y1 - u.y0, u.x1 - u.x0 }, EPD_GC16, 0, upd_bgrey, EPD_W);
+            if (!box_empty(u)) {                /* (running before the boxes come: see blocker) */
+                int n0 = __atomic_load_n(&nhash, __ATOMIC_ACQUIRE);
+                epd_stream_submit(s, (epd_rect){ PW - u.y1, u.x0, u.y1 - u.y0, u.x1 - u.x0 }, EPD_GC16, 0, upd_bgrey, EPD_W);
+                struct timespec ts = { 0, 1000000 };
+                for (int w = 0; w < 2000 && __atomic_load_n(&nhash, __ATOMIC_ACQUIRE) < n0 + 2; w++) nanosleep(&ts, NULL);
+            }
             double t2 = tsec();
             for (int i = 0; i < ch.n; i++) {
                 box b = ch.b[i];
