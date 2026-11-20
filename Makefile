@@ -19,7 +19,7 @@ glassine-epd-show: $(S)/glassine-epd-show.c $(S)/epd-engine.c $(S)/epd-drm.c $(S
 DESKTOP_SRC = $(S)/glassine-epdd-desktop.c $(S)/epd-wl.c $(S)/epd-ingest.c $(S)/epd-policy.c \
 	$(S)/epd-motion.c $(S)/epd-engine.c $(S)/epd-drm.c $(S)/epd-gpu.c $(S)/epd-stagger.c \
 	$(S)/epd-comp.c $(S)/epd-brush.c
-glassine-epdd-desktop: $(DESKTOP_SRC) $(S)/epd-adapter.h
+glassine-epdd-desktop: $(DESKTOP_SRC) $(S)/epd-adapter.h $(S)/epd-shutscreen.h
 	$(CC) $(CFLAGS) -fvect-cost-model=cheap -Wall -DEPD_GPU $(DRM_CFLAGS) -o $@ $(DESKTOP_SRC) \
 		-lX11 -lXext -lXdamage -lXfixes -lXi -lXcomposite -lEGL -lm -lpthread -ldrm
 

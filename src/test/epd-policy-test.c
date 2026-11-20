@@ -21,7 +21,7 @@ static int fails;
 
 static void fmt_act(const action *a, char *s, size_t n)
 {
-    static const char *k[] = { "send", "grab", "graball", "cut", "banner" };
+    static const char *k[] = { "send", "grab", "graball", "cut", "banner", "picture" };
     snprintf(s, n, "%s %d,%d-%d,%d wf%d m%d n%d", k[a->kind], a->b.x0, a->b.y0, a->b.x1, a->b.y1, a->wf, a->mode, a->n);
 }
 
@@ -1612,6 +1612,120 @@ static void scenario_sleep(void)
     free(j);
 }
 
+/* "shutdown-screen" (a restart or power-off began, GlassineOS/shell's
+ * glassine-shutdown-screen): from every state, the picture (no grab of the page)
+ * and ONE full-panel flashing GC16; then nothing more for anything: damage, input,
+ * ink, the pointer, windows, a pending full refresh, every control line */
+static int total_acts(const journal *j) { int n = 0; for (int i = 0; i < j->n; i++) n += j->log[i].n; return n; }
+static void shutdown_case(const char *from, const char *line)
+{
+    policy p; pol_init(&p, W, H);
+    p.has_engine = 1;
+    int64_t now = 1000;
+    journal *j = calloc(1, sizeof *j);
+    box all = { 0, 0, W, H }, half = { 0, 900, W, H };
+    idle_until(&p, &now, 2000, j);
+    int want = S_IDLE;
+    if (!strcmp(from, "cleanup")) {
+        actions o = {0};
+        pol_ink(&p, (box){ 100, 100, 300, 140 }, now, &o);
+        want = S_CLEANUP;
+    } else if (!strcmp(from, "run")) {
+        burst_moving = 1;
+        for (int i = 0; i < 6; i++) { burst(&p, &now, one((box){ 0, 900 + i, W, H }), half, PM_AUTO, j); now += 40; }
+        burst_moving = 0;
+        want = S_RUN;
+    } else if (!strcmp(from, "paused")) {
+        actions o = {0};
+        pol_cmd(&p, "pause", now, &o);
+        want = S_PAUSED;
+    } else if (!strcmp(from, "asleep")) {
+        actions o = {0};
+        pol_cmd(&p, "sleep", now, &o);
+        want = S_ASLEEP;
+    }
+    CHECK(p.state == want, "shutdown from %s: the start state is %s", from, state_name(p.state));
+    actions o = {0};
+    int r = pol_cmd(&p, line, now, &o);
+    CHECK(r == 0 && p.state == S_GONE && !strcmp(state_name(p.state), "gone"), "shutdown from %s (%s): returned %d, state %s",
+          from, line, r, state_name(p.state));
+    CHECK(o.n == 2 && o.a[0].kind == A_PICTURE && !memcmp(&o.a[0].b, &all, sizeof all) &&
+          o.a[1].kind == A_SEND && o.a[1].wf == WF_GC16 && o.a[1].mode == M_SCREEN && !memcmp(&o.a[1].b, &all, sizeof all),
+          "shutdown from %s (%s): want the picture + one full GC16, got %d actions", from, line, o.n);
+    for (int i = 0; i < o.n; i++) {
+        char d[96]; fmt_act(&o.a[i], d, sizeof d);
+        CHECK(o.a[i].kind == A_PICTURE || o.a[i].kind == A_SEND, "shutdown from %s: unexpected %s", from, d);
+    }
+    /* everything after it: nothing */
+    journal *k = calloc(1, sizeof *k);
+    p.want_full = 1;                    /* (a rotation settled, the GPU lost the levels) */
+    static const char *later[] = { "full", "pause", "resume", "sleep", "wake", "cut=5", "cut=auto", "cut=2",
+                                   "dither=off", "dither=on", "burst=du", "burst=auto", "clean=full", "clean=partial",
+                                   "du_max=0.05", "flash_min=0.3", "gamma=1.8", "reexec", "rotate", "stats",
+                                   "shutdown-screen", "shutdown-screen POWERED OFF", "sleep\nwake\nfull\n" };
+    for (int i = 0; i < (int)(sizeof later / sizeof *later); i++) {
+        actions a = {0};
+        CHECK(pol_cmd(&p, later[i], now, &a) == 0, "gone: \"%s\" woke it", later[i]);
+        jadd(k, &a);
+        now += 10;
+    }
+    for (int i = 0; i < 300; i++) {     /* 3 s of an app scrolling, the pen, the pointer, windows */
+        now += 10;
+        actions a = {0};
+        box b = { 0, 900 + i % 50, W, H };
+        pol_finger(&p, now, i % 40 < 30, 2.0);
+        pol_input(&p, now);
+        pol_wheel(&p, now);
+        pol_tap(&p, now, i % 2, 200, 300);
+        pol_damage(&p, now);
+        pol_window(&p, b, now);
+        pol_popup(&p, (box){ 100, 100, 600, 600 }, now);
+        pol_popup_gone(&p, (box){ 100, 100, 600, 600 }, now);
+        pol_settled(&p, now);
+        pol_motion(&p, i % 2);
+        pol_engine(&p, 0);
+        pol_ink(&p, (box){ 100 + i, 100, 140 + i, 140 }, now, &a);
+        pol_inked(&p, (box){ 200 + i, 300, 240 + i, 340 }, now);
+        boxlist tf = one(b);
+        CHECK(pol_true(&p, &tf) == 1, "gone: a true frame not taken");
+        boxlist pc = one((box){ 500, 500, 540, 540 });
+        pol_pointer(&p, &pc, now, &a);
+        pol_wake(&p, all, now, &a);
+        pol_recut(&p, now, &a);
+        int st = pol_step(&p, now, i % 3 == 0, 2, now - 50, &a);
+        CHECK(st != STEP_BURST, "gone: a burst asked for");
+        burst_in in = { now, one(b), half, PM_FAST, 1, 3.0, BUSY_AUTO, 0, 1, 0, 0 };
+        pol_burst(&p, &in, &a);
+        pol_timeout(&p, now, 0, 2);
+        jadd(k, &a);
+    }
+    idle_until(&p, &now, now + 3000, k);
+    CHECK(total_acts(k) == 0 && p.state == S_GONE, "gone (from %s): %d actions after the shutdown screen, state %s",
+          from, total_acts(k), state_name(p.state));
+    CHECK(pol_off(p.state), "gone: pol_off false");
+    free(k); free(j);
+}
+static void scenario_shutdown(void)
+{
+    static const char *from[] = { "idle", "cleanup", "run", "paused", "asleep" };
+    for (int i = 0; i < 5; i++) {
+        shutdown_case(from[i], "shutdown-screen");
+        shutdown_case(from[i], "shutdown-screen RESTARTING\n");
+    }
+    shutdown_case("idle", "full\nshutdown-screen STARTING RECOVERY\nwake\n");   /* (one read, several lines: it alone) */
+    /* a whole word only */
+    static const char *not[] = { "xshutdown-screen", "shutdown-screens", "shutdown-screen=1", "clean=shutdown-screen" };
+    for (int i = 0; i < 4; i++) {
+        policy p; pol_init(&p, W, H);
+        actions o = {0};
+        pol_cmd(&p, not[i], 1000, &o);
+        CHECK(p.state != S_GONE, "\"%s\" taken for shutdown-screen", not[i]);
+    }
+    CHECK(pol_cmd_word("a shutdown-screen b", "shutdown-screen") && pol_cmd_word("x\nshutdown-screen\n", "shutdown-screen") &&
+          !pol_cmd_word("shutdown-screen-x", "shutdown-screen"), "pol_cmd_word");
+    CHECK(!pol_off(S_IDLE) && !pol_off(S_CLEANUP) && !pol_off(S_RUN) && pol_off(S_PAUSED) && pol_off(S_ASLEEP), "pol_off");
+}
+
 /* a terminal repainting on its own every 700 ms (htop, a clock): after
  * quiet_after ms without input the repaints collect into one update per
  * quiet_ms; a touch lifts that at once */
@@ -2795,6 +2909,7 @@ int main(void)
     scenario_pages();
     scenario_typing();
     scenario_sleep();
+    scenario_shutdown();
     scenario_press();
     scenario_calm();
     scenario_moving();

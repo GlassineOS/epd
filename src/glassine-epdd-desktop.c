@@ -481,6 +481,13 @@
  * banner replaced by the screen, updates on
  * pause / resume stop touching the panel (e.g. while glassine-greytest owns it);
  * resume repaints everything with a full GC16
+ * shutdown-screen [TEXT] a restart or power-off began (GlassineOS/shell's
+ * glassine-shutdown-screen): /run/glassine-shutdown-screen.pgm (P5, the
+ * logical screen) replaces the page in one full flashing GC16, from any
+ * state (asleep, paused too); then nothing reaches the panel until exit and
+ * every later line is ignored (wake, resume, full, reexec, ...). An unreadable
+ * picture: a white page, TEXT ([A-Z ] only) as the black bar at the bottom.
+ * A whole word, taken alone (the rest of the read does not apply)
  * mark log the time (ms, the verbose log's clock): t0 for latency tests
  * impostor X Y W H FILE show these pixels now, before X has them (see impostor)
  * drag start|move|end ... a tile handle dragged: glassine-epdd-desktop paints it (see drag_cmd)
@@ -532,6 +539,7 @@
 #include "epd-stagger.h"
 #include "epd-comp.h"
 #include "epd-glyphs.h"
+#include "epd-shutscreen.h"
 #include "epd-wl.h"
 #include "epd-ingest.h"
 #include "epd-grey.h"
@@ -1209,8 +1217,11 @@ static void eng_update(const struct onyx_epdc_update *u)
     }
 }
 
+static volatile int shut_state;     /* the shutdown screen: 1 = its picture is in shadow, 2 = it was sent (see shutdown_screen) */
+
 static void ebc_update(const struct onyx_epdc_update *u0, const char *what)
 {
+    if (shut_state == 2) return;        /* the shutdown screen is the panel's last picture */
     struct onyx_epdc_update u = *u0;
     u.marker = ++marker;
     if (eng) {
@@ -3996,7 +4007,7 @@ static box pen_read(struct pen *p, int *lost, int *dropped)
                     epdb_stroke_begin(&p->st, &p->sp, (uint32_t)(tsec() * 1e6) | 1);
                 }
                 pthread_mutex_lock(&buf_mu);
-                acc = box_union(acc, ink_seg(&p->br, &p->st, &pt, halo));
+                if (!shut_state) acc = box_union(acc, ink_seg(&p->br, &p->st, &pt, halo));   /* (not over the shutdown picture) */
                 pthread_mutex_unlock(&buf_mu);
                 p->drawing = 1; p->lx = bx; p->ly = by;
                 p->inked_ms = now_ms();
@@ -4012,6 +4023,7 @@ static box halo_flush(void)
     box pb = {0};
     if (halo_pend.x0 >= halo_pend.x1 || !halo_plane) return pb;
     pthread_mutex_lock(&buf_mu);
+    if (shut_state) { pthread_mutex_unlock(&buf_mu); halo_pend = (epdb_box){ 0, 0, 0, 0 }; return pb; }   /* (not over the shutdown picture) */
     epdb_target t = pen_target(1);
     epdb_box w = epdb_halo_flush(&t, halo_pend);
     if (w.x0 < w.x1 && w.y0 < w.y1) gt_mark((epd_ingest_rect){ w.x0, w.y0, w.x1 - w.x0, w.y1 - w.y0 });
@@ -4103,10 +4115,12 @@ static void *pen_thread(void *arg)
             if (lost) break;
             if (!box_empty(b) && pen_ok) {
                 pthread_mutex_lock(&buf_mu);
-                send(b, WF_DU, M_PART, 0);
-                list_add(&ink_new, b);
+                if (pen_ok) {                   /* (again under the lock: main may have just turned it off) */
+                    send(b, WF_DU, M_PART, 0);
+                    list_add(&ink_new, b);
+                    inked = 1;
+                }
                 pthread_mutex_unlock(&buf_mu);
-                inked = 1;
             }
             drawing |= p->drawing;
             inking |= p->drawing || ((p->tool_pen || p->touch) && now_ms() - p->inked_ms < INK_HOVER_MS);
@@ -4122,10 +4136,12 @@ static void *pen_thread(void *arg)
             box hb = halo_flush();
             if (!box_empty(hb) && pen_ok) {
                 pthread_mutex_lock(&buf_mu);
-                send(hb, WF_DU, M_PART, 0);
-                list_add(&ink_new, hb);
+                if (pen_ok) {
+                    send(hb, WF_DU, M_PART, 0);
+                    list_add(&ink_new, hb);
+                    inked = 1;
+                }
                 pthread_mutex_unlock(&buf_mu);
-                inked = 1;
             }
         }
         /* pick up (un)plugged pen devices; never mid-stroke (state is reset) */
@@ -4144,22 +4160,24 @@ static void *pen_thread(void *arg)
 /* ---- sleep banner (glassine-powerd: "sleep" before suspend, "wake" after) ------
  * The panel keeps its image without power, so a suspended device looks awake:
  * a black bar with "SLEEPING" at the bottom says it is not (epd-glyphs.h). */
-static box sleep_banner(int W, int H)
+static box bar_draw(int W, int H, const char *text)
 {
-    const char *text = "SLEEPING";
     box bar = { 0, H - BAR_H, W, H };
+    int len = (int)strlen(text), scale = 6;
+    while (scale > 1 && len * 6 * scale > W) scale--;       /* (a long line: smaller letters) */
     /* into shadow too: it is what the panel shows now (and the engine reads
      * shadow); "wake" re-reads the bar with all=1, which puts the screen back */
     for (int py = bar.y0; py < bar.y1; py++)
         for (int px = 0; px < W; px++) {
             size_t o = (size_t)px * PW + (PW - 1 - py);
-            uint8_t g = epd_bar_ink(text, (int)strlen(text), 6, W, BAR_H, px, py - bar.y0) ? 255 : 0;
+            uint8_t g = epd_bar_ink(text, len, scale, W, BAR_H, px, py - bar.y0) ? 255 : 0;
             shadow[o] = g;
             if (ebuf) ebuf[o] = 0xFF000000u | g << 16 | g << 8 | g;
         }
     gt_mark((epd_ingest_rect){ PW - bar.y1, bar.x0, bar.y1 - bar.y0, bar.x1 - bar.x0 });   /* panel cols PW-y1.., rows x0.. */
     return bar;
 }
+static box sleep_banner(int W, int H) { return bar_draw(W, H, "SLEEPING"); }
 
 /* ---- sleep pill (design round 8): glassine-powerd renders it with glassine-sleep-pill
  * (the shell's theme, turned with the screen) before it sends "sleep"; drawn
@@ -4207,6 +4225,55 @@ static void pill_draw(void)
             if (ebuf) ebuf[o] = 0xFF000000u | g << 16 | g << 8 | g;
         }
     gt_mark((epd_ingest_rect){ PW - b.y1, b.x0, b.y1 - b.y0, b.x1 - b.x0 });
+}
+
+/* ---- the shutdown screen ("shutdown-screen [TEXT]": a restart or power-off began) ----
+ * GlassineOS/shell's glassine-shutdown-screen renders the picture (the mark and one
+ * line, turned with the screen) to EPD_SHUT_PATH, a P5 of the logical screen, then
+ * sends the line. The picture replaces the whole page (not drawn over it) in one
+ * full flashing GC16; then the panel is never written again: the state is S_GONE
+ * (the policy sends nothing, every later FIFO line is dropped) and ebc_update drops
+ * whatever else would still reach it (shut_state 2). A picture that can't be read
+ * (missing, not P5 maxval 255, another size, short): a white page, with TEXT (capitals
+ * and blanks only, epd-shutscreen.h) as the black bar at the bottom. */
+static uint8_t *shut_px;                /* the picture, logical px; NULL: the fallback */
+static char shut_text[EPD_SHUT_TEXT_MAX + 1];
+
+/* A_PICTURE (buf_mu held) */
+static void shut_draw(int W, int H)
+{
+    for (int py = 0; py < H; py++)
+        for (int px = 0; px < W; px++) {
+            size_t o = (size_t)px * PW + (PW - 1 - py);
+            uint8_t g = shut_px ? shut_px[(size_t)py * W + px] : 255;
+            shadow[o] = g;
+            if (ebuf) ebuf[o] = 0xFF000000u | g << 16 | g << 8 | g;
+        }
+    if (!shut_px && shut_text[0]) bar_draw(W, H, shut_text);
+    gt_mark((epd_ingest_rect){ PW - H, 0, H, W });
+}
+
+static void run_actions(Display *dpy, Window root, const actions *o);
+static void shutdown_screen(Display *dpy, Window root, const char *cmd, actions *out)
+{
+    int has_text = epd_shut_text(cmd, shut_text, sizeof shut_text);
+    free(shut_px);
+    shut_px = malloc((size_t)pol.W * pol.H);
+    int r = shut_px ? epd_shut_load(EPD_SHUT_PATH, pol.W, pol.H, shut_px) : EPD_SHUT_UNREADABLE;
+    if (r) { free(shut_px); shut_px = NULL; }
+    if (!r) fprintf(stderr, "glassine-epdd-desktop: shutdown screen: picture %s\n", EPD_SHUT_PATH);
+    else fprintf(stderr, "glassine-epdd-desktop: shutdown screen: fallback (%s: %s), white page%s%s\n", EPD_SHUT_PATH,
+                 epd_shut_why(r), has_text ? " + bar " : "", has_text ? shut_text : "");
+    out->n = 0;
+    pol_cmd(&pol, cmd, now_ms(), out);  /* A_PICTURE, the full GC16; S_GONE */
+    pen_ok = 0;                         /* (A_PICTURE again, under the lock) */
+    run_actions(dpy, root, out);
+    out->n = 0;
+    pthread_mutex_lock(&buf_mu);
+    shut_state = 2;                     /* the last update the panel takes */
+    pthread_mutex_unlock(&buf_mu);
+    if (eng) epd_stream_park(eng, 1);   /* the link fully down once it is out (as sleep) */
+    fprintf(stderr, "glassine-epdd-desktop: shutdown screen sent: the panel takes nothing more, control lines are ignored\n");
 }
 
 static void on_quit(int sig) { (void)sig; quit_sig = 1; }
@@ -4342,6 +4409,11 @@ static void run_actions(Display *dpy, Window root, const actions *o)
                          pthread_mutex_lock(&buf_mu);
                          if (pill_px) pill_draw(); else sleep_banner(pol.W, pol.H);
                          pthread_mutex_unlock(&buf_mu); break;
+        case A_PICTURE:  pthread_mutex_lock(&buf_mu);
+                         pen_ok = 0;             /* the pen thread: no more ink sent (it checks under the lock) */
+                         shut_draw(pol.W, pol.H);
+                         shut_state = 1;         /* ... nor drawn into shadow */
+                         pthread_mutex_unlock(&buf_mu); break;
         }
     }
 }
@@ -4428,7 +4500,7 @@ static int imp_load(const char *path, int w, int h, uint8_t *g, const uint8_t **
 static void true_frames(Display *dpy, Window root, boxlist *pend, int64_t *first_dmg, int64_t t)
 {
     boxlist ch = {0};
-    if (pol.state != S_PAUSED && pol.state != S_ASLEEP) {
+    if (!pol_off(pol.state)) {
         frame fr[MAXBOX];
         for (int i = 0; i < wl_true.n; i++) fr[i] = snap(dpy, root, wl_true.b[i], src_fb);
         pthread_mutex_lock(&buf_mu);
@@ -4501,7 +4573,7 @@ static int ptr_step(int64_t now)
     box nb = ptr_vis ? box_clip(ptr.b, scr) : (box){0};
     int same_box = !memcmp(&nb, &ptr_drawn.b, sizeof nb);
     if (ptr_vis == ptr_drawn.on && (!ptr_vis || (same_box && ptr.gen == ptr_drawn.gen))) return -1;
-    if (pol.state == S_PAUSED || pol.state == S_ASLEEP || pen_inking) return -1;
+    if (pol_off(pol.state) || pen_inking) return -1;
     if (ptr_vis && ptr_drawn.on && same_box && now - ptr_drawn.t_img < PTR_IMG_MS)
         return (int)(PTR_IMG_MS - (now - ptr_drawn.t_img));     /* (an animated cursor: rate-limited) */
     if (now - ptr_drawn.t < PTR_MIN_MS) return (int)(PTR_MIN_MS - (now - ptr_drawn.t));
@@ -4546,7 +4618,7 @@ static void impostor(Display *dpy, Window root, const char *cmd, actions *out)
     if (sscanf(cmd, "impostor %d %d %d %d %99s", &x, &y, &w, &h, path) != 5) return;
     if (strncmp(path, "/run/user/", 10) || strstr(path, "..")) { fprintf(stderr, "glassine-epdd-desktop: impostor: bad path\n"); return; }
     if (w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > pol.W || y + h > pol.H) return;
-    if (pen_inking || pol.state == S_PAUSED || pol.state == S_ASLEEP) return;
+    if (pen_inking || pol_off(pol.state)) return;
     int64_t t0 = now_ms(), t_file = 0;
     box b = { x, y, x + w, y + h };
     frame fr = { b, PW - b.y1, b.y1 - b.y0, b.x1 - b.x0, fbuf_get((size_t)w * h), b.y1 - b.y0 };
@@ -4844,7 +4916,7 @@ static void desk_changed(Display *dpy, Window root, Atom cur_a, Atom num_a, acti
     int old = cur_desk;
     cur_desk = (int)d;
     if (old < 0 || old >= MAXDESK || d < 0 || d >= MAXDESK) return;
-    if (pol.state == S_PAUSED || pol.state == S_ASLEEP) return;
+    if (pol_off(pol.state)) return;
     /* the one left: as the panel shows it */
     if (!desk_snap[old] && !(desk_snap[old] = malloc(sizeof shadow))) return;
     pthread_mutex_lock(&buf_mu);
@@ -5214,6 +5286,13 @@ int main(int argc, char **argv)
         char cmd[4096];
         ssize_t k = ctl >= 0 ? read(ctl, cmd, dpy ? 127 : sizeof cmd - 1) : -1;
         if (k > 0) cmd[k] = 0;
+        /* the shutdown screen is up: every later line is dropped (a reexec would
+         * start with a full refresh of the page, a wake or resume repaint it) */
+        if (k > 0 && pol.state == S_GONE) k = 0;
+        if (k > 0 && pol_cmd_word(cmd, "shutdown-screen")) {
+            shutdown_screen(dpy, root, cmd, &out);  /* alone: nothing else in this read applies */
+            k = 0;
+        }
         /* window hints (Wayland only: X has its own window events), first: they may
          * share a read with other lines */
         if (k > 0 && !dpy) k = hint_cmd(cmd);
@@ -5633,7 +5712,7 @@ int main(int argc, char **argv)
                 for (int i = 0; i < 10; i++) { frame f = snap(dpy, root, (box){ 0, 0, W, H }, fbsrc); fbuf_put(f.g); }
                 fprintf(stderr, "glassine-epdd-desktop: bench %s: 10 full-screen snaps %lld ms\n", fbsrc ? "fb" : "x", (long long)(now_ms() - t0));
             }
-            if (strstr(cmd, "rotate") && pol.state != S_ASLEEP && pol.state != S_PAUSED) {
+            if (strstr(cmd, "rotate") && !pol_off(pol.state)) {
                 settling = 1; settle_rot = 1;
                 settle_t0 = settle_dmg = now_ms();
             }
@@ -5655,7 +5734,7 @@ int main(int argc, char **argv)
             run_actions(dpy, root, &out);
             /* asleep / paused: the link fully down once the banner is out, no warm
              * idle (a suspend or another panel owner follows) */
-            if (eng) epd_stream_park(eng, pol.state == S_ASLEEP || pol.state == S_PAUSED);
+            if (eng) epd_stream_park(eng, pol_off(pol.state));
             /* gamma/ink (daemon side); the policy's settings are applied again: harmless */
             apply_cmd(cmd);
             live_note(cmd);
@@ -5677,7 +5756,7 @@ int main(int argc, char **argv)
             if (dpy) check_active(dpy, root); else wl_check_active();
             pol_recut(&pol, now_ms(), &out);
         }
-        if (eng && epd_stream_levels_lost(eng)) {   /* the GPU hung with the engine state on it */
+        if (eng && pol.state != S_GONE && epd_stream_levels_lost(eng)) {   /* the GPU hung with the engine state on it */
             fprintf(stderr, "glassine-epdd-desktop: panel levels lost with the GPU: full flash\n");
             pol.want_full = 1;
         }
@@ -5712,7 +5791,7 @@ int main(int argc, char **argv)
             imp_check.n = 0;
         }
         int inking = pen_inking;
-        pen_ok = pol.state != S_PAUSED && pol.state != S_ASLEEP;
+        pen_ok = !pol_off(pol.state);
         /* the pointer shows in this iteration's reads (ptr_stamp) */
         int64_t pen_ago = now_ms() - pen_input_ms;
         ptr_vis = wl && ptr_mode && ptr.img && !inking && pen_ago >= PTR_PEN_MS;

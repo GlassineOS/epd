@@ -29,9 +29,11 @@ a statistics dump), without restarting it and so without ending the desktop sess
     found wherever it stands in the line; the first `name=` wins.
   - A value must not contain the name of another command (`stats`, `sleep`, `mark`,
     `wake`, `shot` and the like): it would trigger that command too. The help comment
-    says this about profile file names. `full` is matched as a whole word
-    (`cmd_word`, `src/epd-policy.c`), so `clean=full` doesn't start a full refresh; this
-    page didn't check whether any other word is.
+    says this about profile file names. `full` and `shutdown-screen` are matched as
+    whole words (`pol_cmd_word`, `src/epd-policy.c`), so `clean=full` doesn't start a
+    full refresh; this page didn't check whether any other word is. The host test
+    `src/test/epd-cmdwords-test.py` fails if any word the sources look for could fire on
+    a `shutdown-screen [TEXT]` line.
 - **How much is read at once.** Under X a read takes at most 127 bytes; under the
   Wayland compositor backend at most 4095 (`src/glassine-epdd-desktop.c`, the read of
   `ctl`). Keep a line short; the source comment says writes of up to `PIPE_BUF` are
@@ -62,6 +64,7 @@ drift from the code. For the settings that are knobs (`src/epd-knobs.h`) see
 | `mark` | logs a timestamp (milliseconds, the verbose log's clock) |
 | `sleep`, `wake` | around suspend: a banner is painted and updates stop; the banner is replaced by the screen and updates resume |
 | `pause`, `resume` | stop touching the panel; `resume` repaints with a full GC16 |
+| `shutdown-screen [TEXT]` | a restart or power-off began (GlassineOS/shell's `glassine-shutdown-screen`): the picture `/run/glassine-shutdown-screen.pgm` (README, "Runtime interfaces") replaces the whole page in one full flashing GC16, from any state, asleep and paused too; then the panel is never written again until the daemon exits (state `gone`), and every later line is ignored, `wake`, `resume`, `full`, `reexec` and another `shutdown-screen` included. A picture that can't be read (missing, not a P5 of maxval 255 at the logical screen's size, short) gives a white page, with TEXT as a black bar at the bottom when it is capitals and blanks only (`[A-Z ]`, at most 63). The word is matched whole and taken alone: the rest of its line and of the same read doesn't apply. The log says which it drew (`picture` or `fallback`) |
 | `shot` | saves the panel buffer and a fresh read as panel-order PGMs, only into `/run/glassine-epdd-prof/` (README) |
 | `du_max=F` | largest screen fraction sent as DU (default 0.03) |
 | `flash_min=F` | smallest screen fraction sent as a flashing GC16 (default 0.35) |

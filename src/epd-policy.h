@@ -171,10 +171,12 @@ enum { WF_DU = 1, WF_GC16 = 2, WF_DU4 = 3 };   /* WF_DU4: engine only (motion=ad
 /* partial / full-screen flash / flash of just the area (the driver widens every
  * flashing update to the whole panel: glassine-epdd-desktop does M_AREA as two partials) */
 enum { M_PART = 0, M_SCREEN = 1, M_AREA = 2 };
-enum { A_SEND, A_GRAB, A_GRAB_ALL, A_CUT, A_BANNER };
+enum { A_SEND, A_GRAB, A_GRAB_ALL, A_CUT, A_BANNER, A_PICTURE };
 /* A_GRAB: copy X's pixels of b into the panel buffer (changed ones);
  * A_GRAB_ALL: every pixel of b; A_SEND: SEND_UPDATE b with wf/mode;
- * A_CUT: set the frame cut to n; A_BANNER: draw the "SLEEPING" bar into the buffer */
+ * A_CUT: set the frame cut to n; A_BANNER: draw the "SLEEPING" bar into the buffer;
+ * A_PICTURE: draw the shutdown picture over all of b (the whole screen) into the
+ * buffer, and from then on nothing else may reach the panel ("shutdown-screen") */
 /* n: A_CUT the cut; A_SEND with WF_DU: an A2 cut to n frames (0 = none; engine only) */
 typedef struct { int kind; box b; int wf, mode, n; } action;
 #define MAXACT 48
@@ -236,8 +238,14 @@ enum { LV_GC16, LV_DU4, LV_A2, LV_A2_8, LV_A2_6, LV_A2_4, LV_A2_2, LV_N };
 enum { PM_AUTO = 0, PM_QUALITY = 1, PM_FAST = 2, PM_PRESS = 3 };
 
 enum { RUN_END_FLASH = 0, RUN_END_PARTIAL = 1 };
-enum { S_IDLE, S_CLEANUP, S_RUN, S_PAUSED, S_ASLEEP };
+enum { S_IDLE, S_CLEANUP, S_RUN, S_PAUSED, S_ASLEEP, S_GONE };
+/* S_GONE: "shutdown-screen" put the shutdown picture on the panel; terminal, the
+ * panel is never written again (until the daemon exits) */
 const char *state_name(int s);
+/* the panel takes no updates in state s (paused, asleep, gone) */
+int pol_off(int s);
+/* cmd contains w as a whole word (blanks or line ends around it) */
+int pol_cmd_word(const char *cmd, const char *w);
 
 typedef struct {
     /* config (FIFO / eink.conf "@" commands) */
@@ -406,9 +414,13 @@ void pol_init(policy *p, int W, int H);
  * busy=F (busy content's screen share, see BUSY_N; 0 = off)
  * ink_redraw=du|off (default du) ink_clean=damage|stroke (default damage: INK_DEBT_PAUSE_MS) */
 void pol_config(policy *p, const char *cmd);
-/* FIFO command: full pause resume sleep wake gamma= + the settings above.
+/* FIFO command: full pause resume sleep wake gamma= shutdown-screen + the settings above.
  * "sleep": the page is grabbed whole, the banner drawn over it, then one full
  * GC16 (design round 8: a clean page to sleep on).
+ * "shutdown-screen" (a whole word; from any state, asleep and paused too): the
+ * shutdown picture replaces the page (A_PICTURE, no grab), one full flashing GC16,
+ * and S_GONE: every later line is ignored and nothing is sent again. The rest of
+ * the line is not read (its capitals are the daemon's fallback text).
  * Returns 1 on "wake" from sleep: the caller grabs the banner area (p->banner, all pixels)
  * and the changed rest of the screen, then calls pol_wake */
 int pol_cmd(policy *p, const char *cmd, int64_t now, actions *out);

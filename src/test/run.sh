@@ -33,6 +33,11 @@ PARITY2_SELFTEST=1 $B/epd-policy-parity2 1 3000 | tail -1
 PARITY2_SELFTEST=2 $B/epd-policy-parity2 1 3000 | tail -1
 c -o $B/epd-motion-test ../epd-motion.c epd-motion-test.c -lm
 $B/epd-motion-test
+# the shutdown screen: no control word fires on a "shutdown-screen [TEXT]" line; its fallback
+# text, the picture's checks (P5 of the logical screen), a glyph for every capital
+${PYTHON:-python3} -I epd-cmdwords-test.py ../glassine-epdd-desktop.c ../epd-policy.c ../epd-knobs.h ../epd-knobs-ctl.h
+c -o $B/epd-shutscreen-test epd-shutscreen-test.c
+$B/epd-shutscreen-test "$V"
 
 # the files a control line may name: only a file name in the daemon's directory, 0640, no symlinks
 c -o $B/epd-profpath-test epd-profpath-test.c

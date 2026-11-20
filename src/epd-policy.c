@@ -73,8 +73,8 @@ void list_fold(boxlist *l, int max)
 
 const char *state_name(int s)
 {
-    static const char *n[] = { "idle", "cleanup", "run", "paused", "asleep" };
-    return s >= 0 && s <= S_ASLEEP ? n[s] : "?";
+    static const char *n[] = { "idle", "cleanup", "run", "paused", "asleep", "gone" };
+    return s >= 0 && s <= S_GONE ? n[s] : "?";
 }
 
 /* ---- actions ------------------------------------------------------------- */
@@ -177,7 +177,8 @@ static void forget(policy *p)
     p->m_w = 0; p->m_level = LV_GC16; p->m_down_since = 0; p->stall_t = 0;
 }
 
-static int awake(const policy *p) { return p->state != S_PAUSED && p->state != S_ASLEEP; }
+int pol_off(int s) { return s == S_PAUSED || s == S_ASLEEP || s == S_GONE; }
+static int awake(const policy *p) { return !pol_off(p->state); }
 static void to(policy *p, int s)
 {
     if (s != p->state && p->log) p->log("state %s -> %s\n", state_name(p->state), state_name(s));
@@ -314,7 +315,7 @@ void pol_config(policy *p, const char *cmd)
 }
 
 /* cmd contains w as a whole word ("full", not "clean=full" / "flash_full=") */
-static int cmd_word(const char *cmd, const char *w)
+int pol_cmd_word(const char *cmd, const char *w)
 {
     size_t n = strlen(w);
     for (const char *c = cmd; (c = strstr(c, w)); c += n)
@@ -325,7 +326,20 @@ static int cmd_word(const char *cmd, const char *w)
 int pol_cmd(policy *p, const char *cmd, int64_t now, actions *out)
 {
     int wake = 0;
-    if (cmd_word(cmd, "full")) p->want_full = 1;
+    if (p->state == S_GONE) return 0;           /* the shutdown picture stays: nothing more */
+    if (pol_cmd_word(cmd, "shutdown-screen")) {
+        /* a restart or power-off began: the picture replaces the page (no grab),
+         * one full flashing GC16, then the panel is never written again. Alone:
+         * nothing else on the line (or in the same read) applies */
+        box all = { 0, 0, p->W, p->H };
+        act(out, (action){ A_PICTURE, all, 0, 0, 0 });
+        send_gc16(p, out, all, M_SCREEN, G_FOREIGN, now);
+        forget(p);
+        p->want_full = 0;
+        to(p, S_GONE);
+        return 0;
+    }
+    if (pol_cmd_word(cmd, "full")) p->want_full = 1;
     if (strstr(cmd, "pause")) { forget(p); to(p, S_PAUSED); }
     if (strstr(cmd, "resume")) { to(p, S_IDLE); p->want_full = 1; }
     if (strstr(cmd, "sleep")) {
@@ -356,6 +370,7 @@ void pol_banner(policy *p, box b)
 
 void pol_wake(policy *p, box changed, int64_t now, actions *out)
 {
+    if (p->state == S_GONE) return;
     send_gc16(p, out, box_union(p->banner, changed), M_PART, G_FOREIGN, now);
 }
 
@@ -615,7 +630,7 @@ void pol_inked(policy *p, box b, int64_t now)
 
 void pol_recut(policy *p, int64_t now, actions *out)
 {
-    if (p->state != S_RUN) cut(p, out, cut_rest(p), now);
+    if (p->state != S_RUN && p->state != S_GONE) cut(p, out, cut_rest(p), now);
 }
 
 /* any tile of b DU'd >= GHOST_MAX times since its last flash */
@@ -692,6 +707,7 @@ static int single(const policy *p)
 
 int pol_true(policy *p, const boxlist *ch)
 {
+    if (p->state == S_GONE) return 1;           /* (taken: nothing is painted any more) */
     if (single(p)) return 0;
     for (int i = 0; i < ch->n; i++) list_add(&p->dirty, ch->b[i]);
     if (ch->n) pending(p);
@@ -972,6 +988,7 @@ int pol_step(policy *p, int64_t now, int inking, int pend_n, int64_t first_dmg, 
     switch (p->state) {
     case S_PAUSED:
     case S_ASLEEP:
+    case S_GONE:
         return pend_n ? STEP_DROP : STEP_NONE;
     case S_IDLE:
     case S_CLEANUP:
