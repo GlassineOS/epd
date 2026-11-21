@@ -291,7 +291,7 @@ static long run(const op *ops, long n, const char *keep, int prof, int verbose)
         if (s1 != s2 || !same_acts(&a, &b)) { bad = s; snprintf(what, sizeof what, "step %d vs %d", s1, s2); break; }
         if (!keep) for (int i = 0; i < a.n; i++) if (a.a[i].kind == A_SEND) cov.swf[a.a[i].wf & 3][a.a[i].mode & 3]++;
         if (s1 == STEP_BURST) {
-            burst_in in = { now, o->ch, o->pwin, o->pm, o->moving, o->speed, o->busy, o->dither, o->always, o->pages, o->calm };
+            burst_in in = { now, o->ch, o->pwin, o->pm, o->moving, o->speed, o->busy, o->dither, o->always, o->pages, o->calm, CONTENT_NONE };
             ref_burst_in ri = { now, RL(&o->ch), RB(o->pwin), o->pm, o->moving, o->speed, o->busy, o->dither, o->always,
                                 o->pages, o->calm };
             a.n = 0; b.n = 0;

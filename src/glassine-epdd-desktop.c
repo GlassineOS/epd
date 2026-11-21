@@ -180,6 +180,12 @@
  * dot flips in video and slow gradients, error < T. After a
  * quiet gap (idle_ms / 2) sway sends the true picture, which
  * the cleanup then reads. eink.conf: @deadband=T
+ * hints=on|off what apps say their frames are (sway: the ink protocol's
+ * set_content) is followed (default on): a page at once,
+ * exact, in one refresh, no debounce hold; a step of a
+ * movement as a run, ended by the first other frame there
+ * (CONTENT_* in epd-policy.h). off: such frames are
+ * treated as any other. eink.conf: @hints=off
  * gamma=G grey curve out = 255*(in/255)^G (default 1.8). The panel
  * shows 16 levels (top nibble), so UI light greys (Adwaita's
  * #f6f5f4, #deddda) land on white; G > 1 darkens them into
@@ -580,6 +586,8 @@ static void wl_view_off(void);
 static void dz_prep_drop(void);
 static int wl_lazy = 1;             /* lazy=on|off: convert a frame only when it is read (epd_wl_set_damage) */
 static int band_t;                  /* deadband=T (0..16; sway's GPU) */
+static struct { int kind; box b; } said;   /* what an app said its newest frame is (wl_hint) */
+static int wl_hints = 1;            /* hints=on|off */
 static void band_push(void);
 static void wl_lazy_set(int on);
 static int wl_ahead = 2, wl_ahead_ms = 23;  /* ahead=off|run|predict (0/1/2), ahead_ms= (sway: early DONE in runs) */
@@ -886,6 +894,8 @@ static void apply_cmd(const char *cmd)
     if (strstr(cmd, "ingest_view=off")) { ingest_view = 0; wl_view_off(); }
     if (strstr(cmd, "ingwait=on")) ingest_wait = 1;
     if (strstr(cmd, "ingwait=off")) ingest_wait = 0;
+    if (strstr(cmd, "hints=on")) wl_hints = 1;
+    if (strstr(cmd, "hints=off")) { wl_hints = 0; said.kind = 0; }
     if (strstr(cmd, "lazy=on")) wl_lazy_set(1);
     if (strstr(cmd, "lazy=off")) wl_lazy_set(0);
     if (strstr(cmd, "ahead=run")) wl_ahead = 1;
@@ -1975,6 +1985,28 @@ static void wl_damage(void *ctx, const epd_wl_rect *r, int n)
     (void)ctx;
     for (int k = 0; k < n; k++) list_add(&wl_dmg, (box){ r[k].x, r[k].y, r[k].x + r[k].w, r[k].y + r[k].h });
 }
+
+/* what an app said its frames are (glassine_ink_surface_v1.set_content, through sway's
+ * FRAME): the newest said frame not yet painted, kind (CONTENT_*) and where it holds.
+ * A later frame nobody said anything about, changing something there, takes it back:
+ * the burst is then what the newest frame is. The policy gets it with the burst
+ * (burst_in.content) and with the damage (no debounce hold); "hints=off" ignores them */
+static unsigned long said_n[3];
+
+static void wl_hint(void *ctx, int kind, epd_wl_rect hr, const epd_wl_rect *r, int n)
+{
+    (void)ctx;
+    if (!wl_hints) return;
+    if (kind == CONTENT_PAGE || kind == CONTENT_MOTION) {
+        said.kind = kind;
+        said.b = (box){ hr.x, hr.y, hr.x + hr.w, hr.y + hr.h };
+        said_n[kind]++;
+        return;
+    }
+    for (int k = 0; k < n && said.kind; k++)
+        if (!box_empty(box_clip((box){ r[k].x, r[k].y, r[k].x + r[k].w, r[k].y + r[k].h }, said.b))) said.kind = 0;
+}
+static int said_at(box b) { return said.kind && !box_empty(box_clip(b, said.b)) ? said.kind : 0; }
 
 /* the dead band's true frames : their rects, until the main
  * loop has compared them with the panel (true_frames). Not damage */
@@ -4982,6 +5014,7 @@ int main(int argc, char **argv)
         epd_wl_set_dmabuf(wl, &wl_dma_ops, NULL);
         epd_wl_set_grey(wl, wl_grey);
         epd_wl_set_cursor(wl, ptr_cb, NULL);
+        epd_wl_set_hint(wl, wl_hint, NULL);
         epd_wl_set_luts(wl, lut, lut_lum);
         band_push();
         wl_lazy_set(wl_lazy);
@@ -5175,10 +5208,14 @@ int main(int argc, char **argv)
                 if (!pend.n) { first_dmg = now_ms(); first_dmg_t = tsec(); }
                 list_add(&pend, wl_dmg.b[i]);
             }
-            pol_damage(&pol, now_ms());
+            /* damage the app said what it is starts no hold; during one, it goes on at once */
+            int all_said = wl_dmg.n > 0;
+            for (int i = 0; i < wl_dmg.n; i++) all_said &= said_at(wl_dmg.b[i]) != 0;
+            if (all_said) pol_damage_said(&pol, now_ms()); else pol_damage(&pol, now_ms());
             for (int i = 0; i < wl_dmg.n; i++) {
                 box c;
                 if (pol_debounce_clip(&pol, wl_dmg.b[i], now_ms(), &c)) list_add(&tapd, c);
+                if (said_at(wl_dmg.b[i]) && pol_debounce_left(&pol, now_ms()) > 0) list_add(&tapd, box_clip(wl_dmg.b[i], said.b));
                 /* the shell's own surfaces never wait: they have no transitions */
                 if (pol_debounce_left(&pol, now_ms()) > 0)
                     for (int k = 0; k < nshell; k++) {
@@ -5321,6 +5358,7 @@ int main(int argc, char **argv)
                 if (use_wl && !(wl = epd_wl_open(NULL, W, H, wl_rect, NULL))) return 1;
                 epd_wl_set_dmabuf(wl, &wl_dma_ops, NULL);
                 epd_wl_set_grey(wl, wl_grey);
+                if (wl) epd_wl_set_hint(wl, wl_hint, NULL);
                 if (wl) epd_wl_set_luts(wl, lut, lut_lum);
                 band_push();
                 if (wl) wl_lazy_set(wl_lazy);
@@ -5623,6 +5661,8 @@ int main(int argc, char **argv)
                         tmw.n, tmw.px, tmw.s * 1e3, tmw.max * 1e3, tmw.px ? tmw.s * 1e9 / tmw.px : 0);
                 memset(&tmw, 0, sizeof tmw);
                 if (band_t || true_n) fprintf(stderr, "glassine-epdd-desktop: deadband=%d: %lu true frames, %lu with something to clean\n", band_t, true_n, true_changed);
+                if (said_n[CONTENT_PAGE] || said_n[CONTENT_MOTION] || !wl_hints)
+                    fprintf(stderr, "glassine-epdd-desktop: hints=%s: %lu frames said page, %lu motion\n", wl_hints ? "on" : "off", said_n[CONTENT_PAGE], said_n[CONTENT_MOTION]);
                 true_n = true_changed = 0;
                 fprintf(stderr, "glassine-epdd-desktop: ingest_view=%s: %lu frames read in place (whole-buffer sync avg %.2f ms), "
                         "%lu copies back (avg %.2f ms)%s\n", ingest_view ? "on" : "off", tmv.n, tmv.n ? tmv.sync * 1e3 / tmv.n : 0,
@@ -5825,6 +5865,9 @@ int main(int argc, char **argv)
                 in.busy = pr->busy;
                 in.always = pr->always;
                 in.pages = pr->pages;
+                in.content = said_at(big);
+                if (verbose && in.content) fprintf(stderr, "content: the app said %s (%d,%d-%d,%d)\n", in.content == CONTENT_PAGE ? "page" : "motion",
+                                                   said.b.x0, said.b.y0, said.b.x1, said.b.y1);
                 if (pr == &shellprof) {         /* the bar, a shell popup: never motion */
                     in.calm = 1;
                     in.pm = PM_AUTO;
@@ -5894,6 +5937,7 @@ int main(int argc, char **argv)
             if (st != STEP_NONE) tapd.n = 0; else tapd = pend;
             pend = db_rest;
         } else if (st != STEP_NONE && !held) pend.n = 0;   /* held: the damage waits for the settled read */
+        if (st != STEP_NONE && !held) said.kind = 0;        /* (painted, or void: the next frames say for themselves) */
         /* the pointer where it is now (after the burst: its reads had the stamp) */
         int ptr_t = wl ? ptr_step(now_ms()) : -1;
         if (wl && ptr_mode && ptr.img && !ptr_vis && !inking && pen_ago < PTR_PEN_MS) ptr_t = (int)(PTR_PEN_MS - pen_ago);

@@ -88,6 +88,8 @@ struct epd_wl {
     } band;
     epd_wl_damage_fn dmg;
     void *dmg_ctx;
+    epd_wl_hint_fn hint;                    /* what the apps said their frames are (GLASSINE_EPD_CAP_HINT) */
+    void *hint_ctx;
     struct {                                /* the newest frame, while its convert waits (dmg set) */
         int on, idx, nexted;                /* nexted: NEXT went out, DONE still owed */
         uint32_t id, seq;
@@ -542,6 +544,14 @@ static int on_frame(epd_wl *s, const struct glassine_epd_msg *m)
      * pol_damage either); else a frame as any: read when due, answered as usual */
     int tr = m->offset & GLASSINE_EPD_FRAME_TRUE && s->band.fn;
     if (tr) s->band.fn(s->band.ctx, rc, n);
+    /* what the app said the frame is: FRAME's stride, and one rect after the damage
+     * (an older backend: 0, as the message is zeroed; a kind we don't know: nothing said) */
+    if (!tr && s->hint) {
+        int kind = m->stride == GLASSINE_EPD_HINT_PAGE || m->stride == GLASSINE_EPD_HINT_MOTION ? (int)m->stride : 0;
+        epd_wl_rect hr = { 0, 0, 0, 0 };
+        if (kind && !(nr < GLASSINE_EPD_MAXRECT && clip(s, grey, m->rect[nr], &hr))) kind = 0;
+        s->hint(s->hint_ctx, kind, hr, rc, n);
+    }
     if (!s->dmg) { convert(s, i, rc, n, m->format, m->seq); return tr ? 0 : n; }
     if (!tr) s->dmg(s->dmg_ctx, rc, n);
     /* an older frame NEXT'ed and never read: answered unread, its damage rides
@@ -561,6 +571,7 @@ static int on_frame(epd_wl *s, const struct glassine_epd_msg *m)
 }
 
 void epd_wl_set_damage(epd_wl *s, epd_wl_damage_fn fn, void *ctx) { s->dmg = fn; s->dmg_ctx = ctx; }
+void epd_wl_set_hint(epd_wl *s, epd_wl_hint_fn fn, void *ctx) { s->hint = fn; s->hint_ctx = ctx; }
 
 void epd_wl_set_cursor(epd_wl *s, epd_wl_cursor_fn fn, void *ctx) { s->cur.fn = fn; s->cur.ctx = ctx; }
 
@@ -662,9 +673,10 @@ int epd_wl_dispatch(epd_wl *s)
                 s->cur.pos_new = 1;
             } else if (m.type == GLASSINE_EPD_HELLO) {
                 s->caps = m.seq;
-                fprintf(stderr, "glassine-epdd-desktop: wl: backend can%s hold a frame (NEXT), grey output by %s, gamma on %s\n",
+                fprintf(stderr, "glassine-epdd-desktop: wl: backend can%s hold a frame (NEXT), grey output by %s, gamma on %s%s\n",
                         s->caps & GLASSINE_EPD_CAP_NEXT ? "" : "not", s->caps & GLASSINE_EPD_CAP_LUM ? "luminance" : "luma",
-                        s->caps & GLASSINE_EPD_CAP_GAMMA ? "its GPU" : "our CPU");
+                        s->caps & GLASSINE_EPD_CAP_GAMMA ? "its GPU" : "our CPU",
+                        s->caps & GLASSINE_EPD_CAP_HINT ? ", the apps' content hints" : "");
                 lut_push(s);
                 band_push(s);
             }
