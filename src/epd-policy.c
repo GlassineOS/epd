@@ -173,7 +173,7 @@ static void forget(policy *p)
     memset(p->ink_tile, 0, sizeof p->ink_tile); p->ink_tiles = 0;
     p->cand.n = 0; p->stale.n = 0; p->popup.n = 0; p->ptr_dirty.n = 0;
     p->run_bursts = 0; p->run_box = (box){0}; p->run_win = (box){0};
-    p->run_cut = 0; p->run_always = 0;
+    p->run_cut = 0; p->run_always = 0; p->run_said = 0;
     p->m_w = 0; p->m_level = LV_GC16; p->m_down_since = 0; p->stall_t = 0;
 }
 
@@ -436,9 +436,9 @@ int pol_debounce_clip(const policy *p, box dmg, int64_t now, box *out)
     return 1;
 }
 
-void pol_damage(policy *p, int64_t now)
+static void damage(policy *p, int64_t now, int said)
 {
-    if (db_may_start(p, now)) { p->db_t0 = now; if (p->log) p->log("debounce: holding the first frame\n"); }
+    if (!said && db_may_start(p, now)) { p->db_t0 = now; if (p->log) p->log("debounce: holding the first frame\n"); }
     int64_t g = now - p->last_dmg;
     if (p->last_dmg > 0 && g >= RW_MIN_GAP_MS && g <= p->run_wait_max) {
         p->rw_t[p->rw_i] = now; p->rw_gap[p->rw_i] = (int)g;
@@ -446,6 +446,8 @@ void pol_damage(policy *p, int64_t now)
     }
     p->last_dmg = now;
 }
+void pol_damage(policy *p, int64_t now) { damage(p, now, 0); }
+void pol_damage_said(policy *p, int64_t now) { damage(p, now, 1); }
 
 /* how long a quiet spell ends what is dirty (see RW_N in epd-policy.h);
  * -1: not now (a finger is down in a run) */
@@ -766,7 +768,7 @@ static void cleanup(policy *p, int64_t now, actions *out)
         p->stale.n = 0;
         p->dirty.n = 0; p->ink_held = 0; p->inkd.n = 0; p->inkr.n = 0; p->ptr_dirty.n = 0;
         p->run_bursts = 0; p->run_box = (box){0}; p->run_win = (box){0};
-        p->run_cut = 0; p->run_always = 0;
+        p->run_cut = 0; p->run_always = 0; p->run_said = 0;
         p->m_w = 0; p->m_level = LV_GC16; p->m_down_since = 0;
         p->stall_t = 0;
         to(p, S_IDLE);
@@ -853,7 +855,7 @@ static void cleanup(policy *p, int64_t now, actions *out)
     }
     p->dirty.n = 0; p->ink_held = 0;
     p->run_bursts = 0; p->run_box = (box){0}; p->run_win = (box){0};
-    p->run_cut = 0; p->run_always = 0;
+    p->run_cut = 0; p->run_always = 0; p->run_said = 0;
     p->m_w = 0; p->m_level = LV_GC16; p->m_down_since = 0;
     p->stall_t = 0;
     to(p, S_IDLE);
@@ -1087,7 +1089,7 @@ static int engaged_popup(const policy *p, int64_t t) { return p->c.drag || wheel
 /* pol_burst's rows,
  * in priority order: the first whose guard holds wins. POPUP and GONE come
  * before INK_RE (the doc's table lists INK_RE first; the code's order is this) */
-enum { R_NONE, R_POPUP, R_GONE, R_INK_RE, R_RUN, R_PRESS, R_STILL_FLOOR, R_TAIL_LARGE,
+enum { R_NONE, R_POPUP, R_GONE, R_INK_RE, R_SAID_PAGE, R_SAID_END, R_RUN, R_PRESS, R_STILL_FLOOR, R_TAIL_LARGE,
        R_PAGE, R_CALM_LARGE, R_FLASH, R_GC16, R_DU };
 /* a burst's facts: what the rows' guards read (the prologue computes them) */
 typedef struct {
@@ -1095,6 +1097,23 @@ typedef struct {
     int flash;                  /* area/screen >= flash_min */
     int wide;                   /* the largest rect / screen > du_max */
 } burst_facts;
+
+/* an app forced to one paint above GC16 (still=range): its repaints keep that paint */
+static int still_floor(const policy *p)
+{
+    return p->still_range && p->adaptive && p->has_engine && (p->m_min != LV_GC16 || single(p));
+}
+/* the content hints apply (see CONTENT_* in epd-policy.h) */
+static int said(const policy *p, const burst_in *in, int kind)
+{
+    return in->content == kind && !in->calm && auto_paint(p, in->pm) && !still_floor(p);
+}
+static int in_run_win(const policy *p, const boxlist *ch)
+{
+    for (int i = 0; i < ch->n; i++) if (!box_empty(box_clip(ch->b[i], p->run_win))) return 1;
+    return 0;
+}
+static int pages_every(const burst_in *in) { return in->pages > 0 ? in->pages : PAGES_FLASH; }
 
 /* which row a burst is: pure, no state changes */
 static int classify(const policy *p, const burst_in *in, const boxlist *ch, const burst_facts *f, int64_t t)
@@ -1121,8 +1140,14 @@ static int classify(const policy *p, const burst_in *in, const boxlist *ch, cons
     /* calm (the shell's bar and popups, "all interaction
      * here should be Calm"): a tap's highlight was a press = dithered DU or the
      * cut-A2 floor (a grey smudge); never a run, a press or the still floor */
+    /* what the app said (CONTENT_*): a run ends with the first frame in its window
+     * that is no step of it (a run of said steps: any such frame; any run: a page);
+     * a page elsewhere is one GC16 partial */
+    if (p->state == S_RUN && in_run_win(p, ch) && !single(p) &&
+        (said(p, in, CONTENT_PAGE) || (p->run_said && in->content != CONTENT_MOTION && !in->calm && auto_paint(p, pm)))) return R_SAID_END;
+    if (said(p, in, CONTENT_PAGE)) return R_SAID_PAGE;
     if (!in->calm && auto_paint(p, pm) &&
-        (in->always || pm == PM_FAST || p->c.drag || in->moving ||
+        (in->always || pm == PM_FAST || p->c.drag || in->moving || said(p, in, CONTENT_MOTION) ||
          (!restacked(p, t) && (((f->gc16_busy || f->busy) && !f->tail) || p->state == S_RUN)))) return R_RUN;
     /* finger down: fast like a run, so the first scroll step shows at once —
      * a GC16 here (the first repaint of a scroll is large) queued every later
@@ -1255,6 +1280,7 @@ int pol_burst(policy *p, const burst_in *in, actions *out)
     if (f.tail && (f.gc16_busy || f.busy) && row != R_NONE && row != R_POPUP && row != R_GONE && row != R_INK_RE && row != R_RUN && p->log) p->log("run tail: no run (the end GC16 is ours)\n");
     /* pages=: every burst that gets this far counts (a page or the flash after them) */
     if ((row == R_PAGE || row == R_CALM_LARGE || row == R_FLASH) && p->burst_auto && f.flash && in->pages) ++p->pages_n;
+    if (row == R_SAID_PAGE && f.flash) ++p->pages_n;
     switch (row) {
     case R_NONE: return how;
     /* a popup's paint, no flash of the rest of the panel: a dithered DU (the
@@ -1292,6 +1318,27 @@ int pol_burst(policy *p, const burst_in *in, actions *out)
         pending(p);
         if (p->log) p->log("ink redraw: DU, the GC16 after the last one\n");
         return C_BW;
+    /* the app said page: one GC16 partial of what changed, exact, whatever its
+     * size; every Nth large one flashes its window (the partials' ghosts), as pages= */
+    case R_SAID_PAGE:
+        if (f.flash && !(p->pages_n % (unsigned)pages_every(in))) {
+            p->pages_n = 0;
+            send_gc16(p, out, box_empty(box_clip(all, in->pwin)) ? all : box_clip(all, in->pwin), M_AREA, G_FOREIGN, t);
+            if (!box_inside(all, in->pwin)) send_gc16(p, out, all, M_PART, G_FOREIGN, t);
+            if (p->log) p->log("page (said): the flash after %d partials\n", pages_every(in) - 1);
+        } else {
+            send_gc16(p, out, all, M_PART, G_FOREIGN, t);
+            if (p->log) p->log("page (said): GC16 partial (%u of %d before a flash)\n", f.flash ? p->pages_n % (unsigned)pages_every(in) : 0, pages_every(in));
+        }
+        gc16_cleans(p, &ch);
+        return C_ALL;
+    /* the run's end picture: its pixels go in exact, and the run's cleanup, now,
+     * takes them with what the run left (one refresh, the cleanup's own rules) */
+    case R_SAID_END:
+        for (int i = 0; i < ch.n; i++) list_add(&p->dirty, ch.b[i]);
+        if (p->log) p->log("run end: a frame that is no step of it (%s)\n", in->content == CONTENT_PAGE ? "said: page" : "nothing said");
+        cleanup(p, t, out);
+        return C_ALL;
     case R_RUN:
         to(p, S_RUN);
             /* its end flash is clipped to the window it happens in (the union
@@ -1305,6 +1352,7 @@ int pol_burst(policy *p, const burst_in *in, actions *out)
         for (int i = 0; i < ch.n; i++) p->run_box = box_union(p->run_box, box_clip(ch.b[i], p->run_win));
         if (t - p->c.ink_t > POST_INK_MS) p->run_bursts++;
         if (in->always) p->run_always = 1;
+        if (in->content == CONTENT_MOTION) p->run_said = 1;
         if (p->cut_auto) cut(p, out, 5, t);
         if (p->adaptive && p->has_engine) {
             int lv = motion_step(p, t, in->speed);

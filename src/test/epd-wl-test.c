@@ -143,6 +143,24 @@ static void paint(int b, struct glassine_epd_rect r, uint32_t p)
     memcpy(buf[b], pic, sizeof pic);
 }
 
+/* what the apps said (epd_wl_set_hint): the last call */
+static struct { int calls, kind, n; epd_wl_rect hr, r0; } hint;
+static void hint_fn(void *ctx, int kind, epd_wl_rect hr, const epd_wl_rect *r, int n)
+{
+    (void)ctx;
+    hint.calls++; hint.kind = kind; hint.hr = hr; hint.n = n; hint.r0 = r[0];
+}
+/* a FRAME saying kind, where: one more rect after the n damage rects */
+static void frame_said(epd_wl *s, uint32_t id, uint32_t seq, int n, const struct glassine_epd_rect *r, uint32_t kind, struct glassine_epd_rect where)
+{
+    struct glassine_epd_msg m = { .type = GLASSINE_EPD_FRAME, .id = id, .seq = seq, .nrect = n, .stride = kind };
+    memcpy(m.rect, r, n * sizeof *r);
+    m.rect[n] = where;
+    be_send(&m, -1);
+    usleep(2000);
+    epd_wl_dispatch(s);
+}
+
 static epd_wl *setup(const char *path, int hello, int lazy)
 {
     epd_wl *s = epd_wl_open(path, W, H, rect_fn, NULL);
@@ -652,6 +670,37 @@ int main(void)
         for (int b = 0; b < 3; b++) munmap(buf[b], W * H * 4);
         munmap(cm, 2 * GLASSINE_EPD_CUR_SLOT);
         close(fd);
+    }
+    /* content hints: FRAME's stride is what the app said, rect[nrect] where. The frame's
+     * damage and its read are as without; a frame that says nothing, an unknown kind, a
+     * place outside the buffer: nothing said */
+    {
+        epd_wl *h = setup(path, 1, 1);
+        epd_wl_set_hint(h, hint_fn, NULL);
+        struct glassine_epd_rect d = { 10, 20, 30, 20 }, where = { 8, 16, 40, 20 }, off = { W + 5, 0, 10, 10 };
+        memset(&hint, 0, sizeof hint);
+        paint(0, d, 0x101010);
+        frame(h, 1, 1, 1, &d);
+        CHECK(hint.calls == 1 && hint.kind == 0 && hint.n == 1 && hint.r0.x == 10 && hint.r0.w == 30, "nothing said: %d calls, kind %d, %d rects", hint.calls, hint.kind, hint.n);
+        int px0 = dmg_px, d0 = dmgs;
+        paint(1, d, 0x202020);
+        frame_said(h, 2, 2, 1, &d, GLASSINE_EPD_HINT_PAGE, where);
+        CHECK(hint.calls == 2 && hint.kind == GLASSINE_EPD_HINT_PAGE && hint.hr.x == 8 && hint.hr.y == 16 && hint.hr.w == 40 && hint.hr.h == 20 && hint.n == 1,
+              "page: %d calls, kind %d at %d,%d %dx%d", hint.calls, hint.kind, hint.hr.x, hint.hr.y, hint.hr.w, hint.hr.h);
+        CHECK(dmgs == d0 + 1 && dmg_px - px0 == 30 * 20, "page: the damage is %d px in %d calls (want %d, 1): the hint's rect is no damage", dmg_px - px0, dmgs - d0, 30 * 20);
+        paint(2, (struct glassine_epd_rect){ 0, 0, W, H }, 0x303030);
+        px0 = dmg_px;
+        frame_said(h, 3, 3, 0, NULL, GLASSINE_EPD_HINT_MOTION, where);      /* the whole buffer, a step */
+        CHECK(hint.calls == 3 && hint.kind == GLASSINE_EPD_HINT_MOTION && hint.hr.w == 40 && dmg_px - px0 == W * H, "motion, whole buffer: kind %d, %d px", hint.kind, dmg_px - px0);
+        paint(0, d, 0x404040);
+        frame_said(h, 1, 4, 1, &d, 7, where);
+        CHECK(hint.calls == 4 && hint.kind == 0, "an unknown kind: %d", hint.kind);
+        paint(1, d, 0x505050);
+        frame_said(h, 2, 5, 1, &d, GLASSINE_EPD_HINT_PAGE, off);
+        CHECK(hint.calls == 5 && hint.kind == 0, "a place outside the buffer: kind %d", hint.kind);
+        epd_wl_done(h);
+        CHECK(memcmp(img, pic, sizeof img) == 0, "said frames: the picture read differs");
+        teardown(h);
     }
     unlink(path);
 

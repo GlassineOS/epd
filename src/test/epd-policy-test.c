@@ -367,20 +367,21 @@ static void idle_until(policy *p, int64_t *now, int64_t until, journal *j)
 static int burst_moving;                 /* the motion estimate the next bursts carry */
 static int burst_pages;                  /* the app's pages= the next bursts carry */
 static int burst_calm;                   /* the shell's calm (burst_in.calm) the next bursts carry */
+static int burst_content;                /* what the app said the next bursts are (CONTENT_*) */
 static int burst_how = -1;               /* the last burst's C_* (pol_burst's return) */
 static double burst_speed;
 static void burst(policy *p, int64_t *now, boxlist ch, box pwin, int pm, journal *j)
 {
     int64_t first = *now;
     pol_input(p, *now);                 /* the scenarios model a user at work */
-    pol_damage(p, *now);
+    if (burst_content) pol_damage_said(p, *now); else pol_damage(p, *now);
     *now += COALESCE_MS;
     actions o = {0};
     int st = pol_step(p, *now, 0, 1, first, &o);
     jadd(j, &o);
     if (st == STEP_BURST) {
         actions b = {0};
-        burst_in in = { *now, ch, pwin, pm, burst_moving, burst_speed, BUSY_AUTO, 0, 0, burst_pages, burst_calm };
+        burst_in in = { *now, ch, pwin, pm, burst_moving, burst_speed, BUSY_AUTO, 0, 0, burst_pages, burst_calm, burst_content };
         burst_how = pol_burst(p, &in, &b);
         jadd(j, &b);
     }
@@ -1229,6 +1230,156 @@ static void scenario_pages(void)
     CHECK(p.state == S_RUN && count(j, WF_DU, M_PART) == 1, "pages: a shifted burst was no run (%s)", state_name(p.state));
     burst_moving = 0;
     burst_pages = 0;
+    free(j);
+}
+
+/* content hints (the app says what a frame is): a page is one GC16 partial at once,
+ * whatever its size, no debounce hold, never a run; motion is a run without a finger,
+ * ended by the first frame in its window that is no step of it; nothing said: as before */
+static int updates(const journal *j)
+{
+    int n = 0;
+    for (int i = 0; i < j->n; i++)
+        for (int k = 0; k < j->log[i].n; k++) n += j->log[i].a[k].kind == A_SEND;
+    return n;
+}
+static void scenario_content(void)
+{
+    policy p; pol_init(&p, W, H);
+    p.whole = 1;                        /* sway's frames: the debounce applies */
+    int64_t now = 1000;
+    journal *j = calloc(1, sizeof *j);
+    idle_until(&p, &now, 3000, j);
+    box win = { 0, 104, W, H }, page = { 16, 120, W - 16, H - 16 }, pop = { 400, 300, 700, 380 };
+    /* nothing said: the first still frame is held (the default debounce) */
+    j->n = 0;
+    pol_damage(&p, now);
+    CHECK(pol_debounce_left(&p, now) == 150, "content: an unhinted first frame is not held (%d)", pol_debounce_left(&p, now));
+    actions o = {0};
+    CHECK(pol_step(&p, now + COALESCE_MS, 0, 1, now, &o) != STEP_BURST, "content: an unhinted first frame paints at the coalesce");
+    idle_until(&p, &now, now + 160, j);
+    CHECK(pol_step(&p, now, 0, 1, now - 160, &o) == STEP_BURST, "content: the held frame never paints");
+    burst_in in0 = { now, one(page), win, PM_AUTO, 0, 0, BUSY_AUTO, 0, 0, 0, 0, CONTENT_NONE };
+    actions b0 = {0};
+    pol_burst(&p, &in0, &b0);
+    jadd(j, &b0);
+    CHECK(count(j, WF_GC16, M_AREA) == 1, "content: an unhinted page-sized change is no flash any more");
+    idle_until(&p, &now, now + 3000, j);
+    /* page: no hold, one GC16 partial, exact */
+    j->n = 0;
+    burst_content = CONTENT_PAGE;
+    pol_damage_said(&p, now);
+    CHECK(pol_debounce_left(&p, now) == 0 && p.db_t0 == 0, "content page: held %d ms", pol_debounce_left(&p, now));
+    burst(&p, &now, one(page), win, PM_AUTO, j);
+    CHECK(updates(j) == 1 && count(j, WF_GC16, M_PART) == 1, "content page: %d updates, %d GC16 partials (want 1, 1)", updates(j), count(j, WF_GC16, M_PART));
+    CHECK(burst_how == C_ALL, "content page: commit %d, want exact greys", burst_how);
+    idle_until(&p, &now, now + 3000, j);
+    CHECK(updates(j) == 1 && p.state == S_IDLE, "content page: %d updates after the quiet (want 1), state %s", updates(j), state_name(p.state));
+    /* a small one (a popover the app draws): still one exact GC16 partial, no DU + cleanup */
+    j->n = 0;
+    burst(&p, &now, one(pop), win, PM_AUTO, j);
+    idle_until(&p, &now, now + 3000, j);
+    CHECK(updates(j) == 1 && count(j, WF_GC16, M_PART) == 1 && burst_how == C_ALL, "content page, small: %d updates, %d partials, commit %d",
+          updates(j), count(j, WF_GC16, M_PART), burst_how);
+    /* a second page while the first's GC16 is in flight: no run */
+    j->n = 0;
+    burst(&p, &now, one(page), win, PM_AUTO, j);
+    now += 40;
+    burst(&p, &now, one(page), win, PM_AUTO, j);
+    CHECK(p.state != S_RUN && count(j, WF_DU, M_PART) == 0, "content page: a GC16 in flight made it a run (%s)", state_name(p.state));
+    idle_until(&p, &now, now + 3000, j);
+    /* with a finger down and the content measured moving: still a page */
+    j->n = 0;
+    pol_finger(&p, now, 1, 1.0);
+    burst_moving = 1;
+    burst(&p, &now, one(page), win, PM_AUTO, j);
+    CHECK(p.state != S_RUN && count(j, WF_GC16, M_PART) == 1, "content page under a finger: state %s", state_name(p.state));
+    burst_moving = 0;
+    pol_finger(&p, now, 0, 0);
+    idle_until(&p, &now, now + 3000, j);
+    /* every Nth large page flashes (the partials' ghosts), small ones don't count */
+    p.pages_n = 0;
+    j->n = 0;
+    for (int i = 0; i < 2 * PAGES_FLASH; i++) {
+        burst(&p, &now, one(page), win, PM_AUTO, j);
+        burst(&p, &now, one(pop), win, PM_AUTO, j);
+        idle_until(&p, &now, now + 3000, j);
+    }
+    CHECK(count(j, WF_GC16, M_AREA) == 2 && count(j, WF_GC16, M_PART) == 4 * PAGES_FLASH - 2, "content page: %d flashes, %d partials for %d pages (want 2, %d)",
+          count(j, WF_GC16, M_AREA), count(j, WF_GC16, M_PART), 2 * PAGES_FLASH, 4 * PAGES_FLASH - 2);
+    /* a quality app, burst=du: their own rule */
+    j->n = 0;
+    burst(&p, &now, one(pop), win, PM_QUALITY, j);
+    CHECK(count(j, WF_GC16, M_PART) == 1, "content page, quality app");
+    idle_until(&p, &now, now + 3000, j);
+    /* motion: a run with no finger and nothing measured; no hold on its first frame */
+    j->n = 0;
+    burst_content = CONTENT_MOTION;
+    box ev = { 200, 600, 700, 800 };
+    pol_damage_said(&p, now);
+    CHECK(pol_debounce_left(&p, now) == 0, "content motion: the first step is held");
+    for (int i = 0; i < 6; i++) {
+        burst(&p, &now, one((box){ ev.x0, ev.y0 + 30 * i, ev.x1, ev.y1 + 30 * i }), win, PM_AUTO, j);
+        now += 120;                     /* (past the run's pacing: every step is read) */
+    }
+    CHECK(p.state == S_RUN && p.run_said && count(j, WF_DU, M_PART) == 6 && count(j, WF_GC16, M_PART) + count(j, WF_GC16, M_AREA) == 0,
+          "content motion: state %s, %d DU, %d GC16", state_name(p.state), count(j, WF_DU, M_PART), count(j, WF_GC16, M_PART) + count(j, WF_GC16, M_AREA));
+    /* a frame outside the run's window (the bar's clock) does not end it */
+    burst_content = CONTENT_NONE;
+    burst_calm = 1;
+    burst(&p, &now, one((box){ 600, 10, 800, 60 }), (box){ 0, 0, W, 104 }, PM_AUTO, j);
+    burst_calm = 0;
+    CHECK(p.state == S_RUN, "content motion: a frame outside the window ended the run");
+    now += 120;
+    /* the first frame in it that is no step: the run ends now, one cleanup with that frame in it */
+    int n0 = updates(j);
+    int64_t t_end = now;
+    burst(&p, &now, one((box){ ev.x0, ev.y0, ev.x1, ev.y1 + 200 }), win, PM_AUTO, j);
+    int gc = 0;
+    for (int i = 0; i < j->n; i++)
+        for (int k = 0; k < j->log[i].n; k++) gc += j->log[i].a[k].kind == A_SEND && j->log[i].a[k].wf == WF_GC16;
+    CHECK(p.state == S_IDLE && !p.run_said && now - t_end <= COALESCE_MS && updates(j) > n0 && gc >= 1 && burst_how == C_ALL,
+          "content motion: the unhinted frame left state %s, %d GC16, commit %d", state_name(p.state), gc, burst_how);
+    int n1 = updates(j);
+    idle_until(&p, &now, now + 3000, j);
+    CHECK(updates(j) == n1, "content motion: %d more updates after the run's end (want 0)", updates(j) - n1);
+    /* a run that ends by its quiet, as any run */
+    j->n = 0;
+    burst_content = CONTENT_MOTION;
+    for (int i = 0; i < 4; i++) { burst(&p, &now, one(ev), win, PM_AUTO, j); now += 120; }
+    burst_content = CONTENT_NONE;
+    idle_until(&p, &now, now + 3000, j);
+    CHECK(p.state == S_IDLE && !p.run_said, "content motion: no cleanup after the quiet (%s)", state_name(p.state));
+    /* a finger's run (nothing said) is not ended by an unhinted frame, but by a page */
+    j->n = 0;
+    pol_finger(&p, now, 1, 1.0);
+    burst_moving = 1;
+    for (int i = 0; i < 4; i++) { burst(&p, &now, one(page), win, PM_AUTO, j); now += 120; }
+    CHECK(p.state == S_RUN && !p.run_said, "content: a finger's run (%s)", state_name(p.state));
+    burst_moving = 0;
+    pol_finger(&p, now, 0, 0);
+    burst(&p, &now, one(pop), win, PM_AUTO, j);
+    CHECK(p.state == S_RUN, "content: an unhinted frame ended a finger's run");
+    now += 120;
+    burst_content = CONTENT_PAGE;
+    burst(&p, &now, one(page), win, PM_AUTO, j);
+    CHECK(p.state == S_IDLE, "content page: did not end the run in its window (%s)", state_name(p.state));
+    n1 = updates(j);
+    idle_until(&p, &now, now + 3000, j);
+    CHECK(updates(j) == n1, "content page at a run's end: %d more updates", updates(j) - n1);
+    burst_content = CONTENT_NONE;
+    /* an app forced to one paint keeps it */
+    policy q; pol_init(&q, W, H);
+    q.has_engine = 1;
+    pol_config(&q, "motion=adaptive still=range mmin=a2 mmax=a2");
+    now = 1000;
+    j->n = 0;
+    idle_until(&q, &now, 3000, j);
+    j->n = 0;
+    burst_content = CONTENT_PAGE;
+    burst(&q, &now, one(page), win, PM_AUTO, j);
+    CHECK(count(j, WF_GC16, M_PART) + count(j, WF_GC16, M_AREA) == 0, "content page in a one-paint app: a GC16");
+    burst_content = CONTENT_NONE;
     free(j);
 }
 
@@ -2793,6 +2944,7 @@ int main(void)
     scenario_firefox_scroll();
     scenario_page_turn();
     scenario_pages();
+    scenario_content();
     scenario_typing();
     scenario_sleep();
     scenario_press();

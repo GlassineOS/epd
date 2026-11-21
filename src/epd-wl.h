@@ -78,6 +78,11 @@ void epd_wl_set_luts(epd_wl *s, const uint8_t luma[256], const uint8_t lum[256])
  * fn gets a true frame's rects at its arrival: no damage (see glassine-epd-output-proto.h),
  * its pixels are the newest frame's as usual */
 void epd_wl_set_band(epd_wl *s, int t, int quiet_ms, epd_wl_damage_fn fn, void *ctx);
+/* what an app said a frame is (GLASSINE_EPD_CAP_HINT: FRAME's stride, GLASSINE_EPD_HINT_*):
+ * fn gets every frame at its arrival, before its damage: kind (0: nothing said, hr then
+ * empty), where it holds (hr) and the frame's damage rects. Not the dead band's true frames */
+typedef void (*epd_wl_hint_fn)(void *ctx, int kind, epd_wl_rect hr, const epd_wl_rect *r, int n);
+void epd_wl_set_hint(epd_wl *s, epd_wl_hint_fn fn, void *ctx);
 /* 1 while a frame whose buffer already went through the table is converted
  * (the callbacks then copy: an identity table) */
 int epd_wl_prelut(const epd_wl *s);

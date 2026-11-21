@@ -33,6 +33,12 @@
  * the whole buffer went through, 0 = none (the raw grey q, as before);
  * offset (GLASSINE_EPD_CAP_BAND) = GLASSINE_EPD_FRAME_TRUE: the dead
  * band's true frame, no new content: BAND below
+ * stride (GLASSINE_EPD_CAP_HINT) = what an app said this frame is
+ * (GLASSINE_EPD_HINT_*, glassine_ink_surface_v1.set_content), 0 = nothing
+ * said; then rect[nrect], one more rect after the damage, is where on
+ * the buffer that holds (the app's surface). An older glassine-epdd-desktop
+ * reads neither. A page frame's damage went through the pass without
+ * the dead band: it is the true picture, no TRUE frame follows for it
  * DMABUF as BUF, for a GPU buffer (GLES sway): a single-plane
  * dma-buf; the modifier in seq (low 32 bits) and nrect (high), so the
  * message layout stays as it was (an older glassine-epdd-desktop ignores it and
@@ -47,6 +53,8 @@
  * each frame's damage into the backend's own R8 buffers
  * GLASSINE_EPD_CAP_BAND : that pass can hold greys in a dead
  * band (BAND below)
+ * GLASSINE_EPD_CAP_HINT : its FRAMEs carry the apps' content
+ * hints (FRAME's stride)
  * CURSOR_IMG the pointer's sprite changed: width, height,
  * stride, offset = where its ARGB8888 pixels sit in the cursor memfd
  * (the backend's, two slots used in turn: the one named stays put until
@@ -93,8 +101,12 @@ enum { GLASSINE_EPD_BUF = 1, GLASSINE_EPD_FRAME = 2, GLASSINE_EPD_DROP = 3, GLAS
 #define GLASSINE_EPD_CAP_LUM 2u
 #define GLASSINE_EPD_CAP_GAMMA 4u
 #define GLASSINE_EPD_CAP_BAND 8u
+#define GLASSINE_EPD_CAP_HINT 16u
 #define GLASSINE_EPD_FRAME_TRUE 1u               /* FRAME's offset: the dead band's true frame */
 #define GLASSINE_EPD_BAND_MAX 16
+/* FRAME's stride: what the app said the frame is (0: nothing) */
+#define GLASSINE_EPD_HINT_PAGE 1u                /* a new page, complete: at once, exact, one refresh */
+#define GLASSINE_EPD_HINT_MOTION 2u              /* a step of a movement the app drives: a run */
 /* CURSOR_IMG's format: the frames' layout the sprite and positions are in */
 #define GLASSINE_EPD_CUR_PORTRAIT 0u             /* XRGB frames: portrait */
 #define GLASSINE_EPD_CUR_PANEL 1u                /* the grey output: R8 frames in panel order */

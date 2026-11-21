@@ -302,6 +302,7 @@ typedef struct {
     int m_level;
     int run_cut;                /* this run used a cut A2 */
     int run_always;             /* this run holds a motion=always app's bursts (no small_motion cleanup) */
+    int run_said;               /* this run holds steps the app called motion (CONTENT_MOTION): it ends at the first other frame */
     unsigned long lvl_n[LV_N];  /* run updates per step (stats) */
     int state;
     int want_full;
@@ -368,8 +369,24 @@ typedef struct {
  * always: the app's motion=always (see ALWAYS below);
  * calm: the shell's own surfaces (bar, popups): never motion — no press, no run,
  * no still floor; small changes a thresholded DU (cleaned later), large a GC16 partial;
- * pages: the app's pages= (see PAGES below; 0 = off) */
-typedef struct { int64_t now; boxlist ch; box pwin; int pm; int moving; double speed; int busy; int dither; int always; int pages; int calm; } burst_in;
+ * pages: the app's pages= (see PAGES below; 0 = off);
+ * content: what the app said the frames of this burst are (CONTENT_*, see below; 0 = nothing) */
+typedef struct { int64_t now; boxlist ch; box pwin; int pm; int moving; double speed; int busy; int dither; int always; int pages; int calm; int content; } burst_in;
+/* content hints (glassine_ink_surface_v1.set_content, through sway's FRAME): the app
+ * says what a frame is, so nothing has to be found out from the frames. The policy
+ * decides no UI question here: what is a page is the app's call.
+ * CONTENT_PAGE the frame replaces the page and is complete: no debounce hold
+ * (pol_damage_said), never a run or a press; ONE GC16 partial of what changed,
+ * whatever its size, and as with pages= every Nth large one flashes (the app's
+ * pages=N, else PAGES_FLASH). Inside a run's window it is the run's end picture:
+ * the run's cleanup takes it (one refresh, the cleanup's rules).
+ * CONTENT_MOTION a step of a movement the app drives: a run burst (the existing run:
+ * the speed ladder, the stagger, its cleanup after the quiet), with no finger or
+ * measured shift needed. The first burst in that run's window that is no such
+ * step ends the run at once, as its end picture (no wait for the quiet).
+ * Not with burst=du or a quality app (auto_paint), nor in an app forced to one paint
+ * (still=range above GC16): those keep their own rule. The popup and ink rows come first. */
+enum { CONTENT_NONE = 0, CONTENT_PAGE = 1, CONTENT_MOTION = 2 };
 /* pages=on|N (an app's eink.conf line, default off; KOReader, from a host study
  * of its frames): an app that REPLACES its page rather than moving it. A swipe
  * page turn kept epd-motion "moving" for MO_HOLD_MS on the finger alone, and a
@@ -426,6 +443,9 @@ void pol_engine(policy *p, int wait_ms);
 /* the first finger: down, and its speed in screen heights/s (0 = not moving) */
 void pol_finger(policy *p, int64_t now, int down, double v);
 void pol_damage(policy *p, int64_t now);                        /* X reported damage */
+/* damage the app said what it is (CONTENT_PAGE / CONTENT_MOTION for all of it): as
+ * pol_damage, but it starts no debounce hold (the app says the frame is meant) */
+void pol_damage_said(policy *p, int64_t now);
 void pol_input(policy *p, int64_t now);                         /* touch / pen / key: is active */
 /* the debounce: a still screen's first damage (nothing painted or damaged for
  * debounce_gap) waits until no damage came for debounce_ms, at most debounce_cap
