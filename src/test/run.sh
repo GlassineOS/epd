@@ -34,6 +34,11 @@ PARITY2_SELFTEST=2 $B/epd-policy-parity2 1 3000 | tail -1
 c -o $B/epd-motion-test ../epd-motion.c epd-motion-test.c -lm
 $B/epd-motion-test
 
+# the pen's ink areas: whose stroke a contact is (the start decides), parity with the per-point rule
+c -o $B/epd-inkarea-test ../epd-policy.c epd-inkarea-test.c -lm
+$B/epd-inkarea-test > "$V/inkarea.log" || { cat "$V/inkarea.log"; false; }
+tail -2 "$V/inkarea.log"
+
 # the files a control line may name: only a file name in the daemon's directory, 0640, no symlinks
 c -o $B/epd-profpath-test epd-profpath-test.c
 $B/epd-profpath-test

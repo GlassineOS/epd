@@ -539,6 +539,7 @@
 #include "epd-dither.h"
 #include "epd-dizzy.h"
 #include "epd-brush.h"
+#include "epd-inkarea.h"
 #include "epd-profpath.h"
 #include "epd-group.h"
 #include "epd-knobs-ctl.h"
@@ -2961,7 +2962,9 @@ static struct pen {
     int x, y, p, touch, tool_pen, rubber, btn;
     int tx, ty, has_tilt;                  /* ABS_TILT_X/Y (raw) */
     int tmin[2], tmax[2], tres[2];         /* their absinfo */
-    int lx, ly, sx, sy, drawing;           /* last drawn point, stroke start */
+    int lx, ly, sx, sy, drawing;           /* last drawn point, the drawn piece's start */
+    int own, drew;                         /* the contact: 0 undecided, 1 inks, -1 doesn't; drew: a piece was drawn */
+    ia_owner ow;                           /* whose stroke it is (epd-inkarea.h) */
     inkend br;                             /* the stroke's brush (from its start; holds a ref) */
     epdb_stroke st;                        /* the renderer's stroke state */
     epdb_point sp;                         /* the stroke's first point */
@@ -3377,20 +3380,25 @@ static void wl_check_active(void)
  * and with the app brushes (glassine_ink_v1 v2 set_brush, widths in panel px):
  * ink brush K TKIND TMIN TMAX TEXP RKIND RMIN RMAX REXP (KIND 0 unset 1 none 2 pen 3 erase)
  * ink r K S X Y W H APP (a rect with brush K, 0 = none)
- * The rects of apps with ink=on (or S 1) become a mask of 4x4 px cells (a cell
- * counts when its centre is inside); the pen thread tests each point against
- * the current mask (two buffers, swapped at "ink end", no lock). */
-#define INK_C 4
+ * and per owner (a window, a popup, a layer surface): ink win KEY before its lines,
+ * ink vis X Y W H (its visible region, for owners with writing regions; S 2 = a
+ * region's rect). The stroke rule and the format: epd-inkarea.h.
+ * The rects of apps with ink=on (or S 1/2) become a mask of 4x4 px cells (a cell
+ * counts when its centre is inside) and the owners a second one; the pen thread
+ * tests a contact's first report against them (does it ink, whose stroke is it)
+ * and each later one against its owner (two buffers, swapped at "ink end", no lock). */
+#define INK_C IA_C
 #define INK_CW (PH / INK_C)
 #define INK_CH (PW / INK_C)
-#define INK_MAXR 256
-static struct { box b; int sdk, br; char app[128]; } ink_r[INK_MAXR], ink_nr[INK_MAXR];   /* br: sway's brush (0: none) */
+static ia_block ink_blk, ink_nblk;     /* the areas in force / being received */
 #define INK_MAXB 32
 /* sway's brushes, 1-based: the v2 numbers + the v3 brush file ids ("" none) */
 typedef struct { inkbrush v; char tip[17], rub[17]; } swbrush;
 static swbrush ink_b[INK_MAXB + 1], ink_nb[INK_MAXB + 1];
-static int ink_n, ink_nn = -1;          /* the areas in force / being received (-1: none) */
+static int ink_nn = -1;                 /* receiving a block (-1: none) */
 static uint8_t ink_mask[2][INK_CW * INK_CH];   /* a brush slot per cell, 0 = no ink */
+static uint8_t ink_own[2][INK_CW * INK_CH];    /* the owner per cell (epd-inkarea.h), 0 = none */
+static uint64_t ink_okey[2][IA_MAXO + 1];      /* each mask's owner keys */
 /* the slots of each mask: each non-permanent brush in a slot holds one ref,
  * dropped when that mask buffer is rebuilt. The pen thread reads a slot only
  * inside ink_hz (a hazard: "I am reading mask c", c + 1), published before and
@@ -3433,6 +3441,13 @@ static inkend ink_end(brush v, const char *id)
 }
 static int inkend_eq(inkend a, inkend b) { return a.h == b.h && a.dmin == b.dmin && a.dmax == b.dmax && a.exp == b.exp && a.gate == b.gate; }
 
+/* does a rect ink: the app's own areas and regions (S 1/2), per-app ones with ink=on */
+static int ink_rect_inks(const ia_rect *r, void *data)
+{
+    (void)data;
+    return r->sdk || profile_for(r->app)->ink;
+}
+
 static void ink_rebuild(void)
 {
     if (!ink_areas) return;
@@ -3444,73 +3459,92 @@ static void ink_rebuild(void)
     for (int k = 1; k < ink_ns[nb]; k++) { bh_drop(sl[k].tip.h); bh_drop(sl[k].rub.h); }
     memset(m, 0, sizeof ink_mask[0]);
     int cells = 0, ns = 1;
-    for (int i = 0; i < ink_n; i++) {
-        if (!ink_r[i].sdk && !profile_for(ink_r[i].app)->ink) continue;
+    ia_owners(&ink_blk, ink_own[nb], INK_CW, INK_CH, ink_rect_inks, NULL);
+    memcpy(ink_okey[nb], ink_blk.key, sizeof ink_okey[nb]);
+    for (int i = 0; i < ink_blk.n; i++) {
+        const ia_rect *ir = &ink_blk.r[i];
+        if (ir->vis || !ink_rect_inks(ir, NULL)) continue;
         const char *tid, *rid;
-        inkbrush br = ink_brush_for(ink_r[i].br, ink_r[i].app, &tid, &rid);
+        inkbrush br = ink_brush_for(ir->br, ir->app, &tid, &rid);
         inkslot e = { ink_end(br.tip, tid), ink_end(br.rub, rid) };
-        if (ink_r[i].sdk) e.tip.gate = e.rub.gate = INK_START_SDK;   /* (an app's canvas: no buttons) */
+        if (ir->sdk) e.tip.gate = e.rub.gate = INK_START_SDK;   /* (an app's canvas: no buttons) */
         int k = 1;
         while (k < ns && !(inkend_eq(sl[k].tip, e.tip) && inkend_eq(sl[k].rub, e.rub))) k++;
         if (k == ns) {
             if (ns == 256) k = 1;       /* (never: <= INK_MAXR rects, 255 slots) */
             else { sl[ns++] = e; bh_hold(e.tip.h); bh_hold(e.rub.h); }
         }
-        box b = ink_r[i].b;
-        vlog("  ink %s %d,%d %dx%d %s brush %d: %s %.1f-%.1f^%.2f eraser %s %.1f-%.1f^%.2f\n", ink_r[i].sdk ? "sdk" : "app",
-             b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, ink_r[i].app, k, sl[k].tip.h ? sl[k].tip.h->id : "none",
+        box b = ir->b;
+        vlog("  ink %s %d,%d %dx%d %s owner %d brush %d: %s %.1f-%.1f^%.2f eraser %s %.1f-%.1f^%.2f\n",
+             ir->sdk == 2 ? "region" : ir->sdk ? "sdk" : "app", b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, ir->app, ir->own, k, sl[k].tip.h ? sl[k].tip.h->id : "none",
              sl[k].tip.dmin, sl[k].tip.dmax, sl[k].tip.exp, sl[k].rub.h ? sl[k].rub.h->id : "none",
              sl[k].rub.dmin, sl[k].rub.dmax, sl[k].rub.exp);
-        for (int cy = (b.y0 + INK_C / 2) / INK_C; cy < INK_CH && cy * INK_C + INK_C / 2 < b.y1; cy++)
-            for (int cx = (b.x0 + INK_C / 2) / INK_C; cx < INK_CW && cx * INK_C + INK_C / 2 < b.x1; cx++) {
-                if (cy * INK_C + INK_C / 2 < b.y0 || cx * INK_C + INK_C / 2 < b.x0) continue;
-                m[cy * INK_CW + cx] = (uint8_t)k;
-                cells++;
-            }
+        cells += ia_fill(m, INK_CW, INK_CH, b, (uint8_t)k);
     }
     ink_ns[nb] = ns;
     __atomic_store_n(&ink_cur, nb, __ATOMIC_SEQ_CST);
     bh_sweep();
-    vlog("ink areas: %d rects, %d cells, %d brushes\n", ink_n, cells, ns - 1);
+    vlog("ink areas: %d rects, %d owners, %d cells, %d brushes\n", ink_blk.n, ink_blk.no, cells, ns - 1);
 }
 
-/* may the pen ink at portrait (px,py)? With e: the brush there for that end
- * of the pen, with a ref the caller drops (bh_drop) */
-static int ink_at(int px, int py, int rubber, inkend *e)
+/* the pen thread's look at the current masks, inside the hazard (see ink_slot) */
+static int ink_hold(void)
 {
-    if (e) *e = (inkend){ 0 };
-    if (ink_mode == 0) return 0;
-    if (!ink_areas) {                   /* X: the active window's app, the default disc */
-        if (e && !rubber) *e = (inkend){ &ink_disc_h[0], BRUSH_DEFAULT.tip.wmin, BRUSH_DEFAULT.tip.wmax, BRUSH_DEFAULT.tip.exp };
-        return ink_window;
-    }
-    if (px < 0 || py < 0 || px >= PH || py >= PW) return 0;
-    size_t o = (size_t)(py / INK_C) * INK_CW + px / INK_C;
-    if (!e) return ink_mask[__atomic_load_n(&ink_cur, __ATOMIC_ACQUIRE)][o] != 0;
     int c;
     do {
         c = __atomic_load_n(&ink_cur, __ATOMIC_SEQ_CST);
         __atomic_store_n(&ink_hz, c + 1, __ATOMIC_SEQ_CST);
     } while (__atomic_load_n(&ink_cur, __ATOMIC_SEQ_CST) != c);
-    int k = ink_mask[c][o];
-    if (k) {
+    return c;
+}
+static void ink_release(void) { __atomic_store_n(&ink_hz, 0, __ATOMIC_RELEASE); }
+
+/* a contact's first report at portrait (px,py): does its stroke ink, and whose is it
+ * (epd-inkarea.h: the start decides)? *e: the brush there for that end of the pen,
+ * with a ref the caller drops (bh_drop) */
+static int ink_start(int px, int py, int rubber, inkend *e, ia_owner *ow)
+{
+    *e = (inkend){ 0 };
+    *ow = (ia_owner){ 0, 1 };
+    if (ink_mode == 0) return 0;
+    if (!ink_areas) {                   /* X: the active window's app, the default disc */
+        if (!rubber) *e = (inkend){ &ink_disc_h[0], BRUSH_DEFAULT.tip.wmin, BRUSH_DEFAULT.tip.wmax, BRUSH_DEFAULT.tip.exp };
+        return ink_window;
+    }
+    long o = ia_cell(px, py, INK_CW, INK_CH);
+    if (o < 0) return 0;
+    int c = ink_hold();
+    int k = ink_mask[c][o], in = ia_start((uint8_t)k, ink_own[c][o], ink_okey[c], ow);
+    if (in) {
         *e = rubber ? ink_slot[c][k].rub : ink_slot[c][k].tip;
         bh_hold(e->h);
     }
-    __atomic_store_n(&ink_hz, 0, __ATOMIC_RELEASE);
-    return k != 0;
+    ink_release();
+    return in;
+}
+
+/* a later report of a contact whose stroke inks: still on its owner's part of the panel? */
+static int ink_cont(int px, int py, const ia_owner *ow)
+{
+    if (ink_mode == 0) return 0;
+    if (!ink_areas) return ink_window;
+    long o = ia_cell(px, py, INK_CW, INK_CH);
+    if (o < 0) return 0;
+    int c = ink_hold();
+    int in = ia_cont(ink_mask[c][o], ink_own[c][o], ink_okey[c], ow);
+    ink_release();
+    return in;
 }
 
 /* an "ink ..." line from sway */
 static void ink_line_cmd(const char *l)
 {
-    int x, y, w, h, s, nc = 0;
-    if (!strcmp(l, "ink begin")) { ink_nn = 0; memset(ink_nb, 0, sizeof ink_nb); return; }
+    if (!strcmp(l, "ink begin")) { ink_nn = 0; ia_begin(&ink_nblk); memset(ink_nb, 0, sizeof ink_nb); return; }
     if (!strcmp(l, "ink end")) {
         if (ink_nn < 0) return;         /* its begin was lost: keep the areas in force */
-        memcpy(ink_r, ink_nr, ink_nn * sizeof ink_r[0]);
+        ink_blk = ink_nblk;
         memcpy(ink_b, ink_nb, sizeof ink_b);
-        ink_n = ink_nn; ink_nn = -1; ink_areas = 1;
+        ink_nn = -1; ink_areas = 1;
         ink_rebuild();                  /* (brush files are read here, main thread) */
         return;
     }
@@ -3537,17 +3571,7 @@ static void ink_line_cmd(const char *l)
         }
         return;
     }
-    if (ink_nn >= INK_MAXR) return;
-    int br = 0;
-    if (!strncmp(l, "ink r ", 6)) {
-        if (sscanf(l, "ink r %d %d %d %d %d %d %n", &br, &s, &x, &y, &w, &h, &nc) != 6 || !nc) return;
-        if (br < 0 || br > INK_MAXB) br = 0;
-    } else if (sscanf(l, "ink %d %d %d %d %d %n", &s, &x, &y, &w, &h, &nc) != 5 || !nc) return;
-    ink_nr[ink_nn].br = br;
-    ink_nr[ink_nn].b = box_clip((box){ x, y, x + w, y + h }, (box){ 0, 0, PH, PW });
-    ink_nr[ink_nn].sdk = s;
-    snprintf(ink_nr[ink_nn].app, sizeof ink_nr[0].app, "%s", l + nc);
-    ink_nn++;
+    ia_line(&ink_nblk, l, (box){ 0, 0, PH, PW });
 }
 
 static const profile *wl_profile_at(int x, int y, box *win)
@@ -3927,14 +3951,22 @@ static float tilt_deg(int v, int mn, int mx, int res)
     return (float)(d < -90 ? -90 : d > 90 ? 90 : d);
 }
 
-/* the stroke ends (lift, left the ink area, a button): its brush ref goes */
+/* the drawn piece pauses (off the owner's part, a button): the next report that
+ * inks starts a new piece there, no line across the gap */
+static void pen_pause(struct pen *p)
+{
+    p->drawing = 0;
+    p->sx = -1;
+}
+
+/* the contact ends (lift): its stroke's brush ref goes */
 static int pen_end(struct pen *p)
 {
     int had = p->br.h != NULL;
     bh_drop(p->br.h);
     p->br = (inkend){ 0 };
-    p->drawing = 0;
-    p->sx = -1;
+    p->own = p->drew = 0;
+    pen_pause(p);
     return had;
 }
 
@@ -3970,10 +4002,12 @@ static box pen_read(struct pen *p, int *lost, int *dropped)
                 if (p->flip) { fx = PW - 1 - fx; fy = PH - 1 - fy; }
                 int bx = (int)fx, by = (int)fy;
                 /* panel (bx,by) = portrait (px = by, py = PW-1-bx) */
-                /* the brush is the stroke start's (its app's, for that end of the pen) */
-                inkend ib;
-                int down = p->touch && !p->btn && ink_at(by, PW - 1 - bx, p->rubber, p->sx < 0 ? &ib : NULL);
-                if (!down) { *dropped |= pen_end(p); continue; }
+                /* the stroke is decided where the pen lands, as the compositor routes it
+                 * (epd-inkarea.h): whether it inks, whose it is, its brush (that app's, for
+                 * that end of the pen); later reports ink on its owner's part only */
+                if (!p->touch) { *dropped |= pen_end(p); continue; }
+                if (!p->own) p->own = ink_start(by, PW - 1 - bx, p->rubber, &p->br, &p->ow) ? 1 : -1;
+                if (p->own < 0 || p->btn || !ink_cont(by, PW - 1 - bx, &p->ow)) { pen_pause(p); continue; }
                 /* the report in panel buffer px; tilt in the same frame (the
                  * pen's x/y axes are the buffer's; flip turns both) */
                 epdb_point pt = { fx, fy, 1, 0, 0, 0, e->input_event_sec + e->input_event_usec / 1e6 };
@@ -3986,9 +4020,10 @@ static box pen_read(struct pen *p, int *lost, int *dropped)
                     if (p->flip) { pt.tilt_x = -pt.tilt_x; pt.tilt_y = -pt.tilt_y; }
                     pt.has_tilt = 1;
                 }
-                if (p->sx < 0) { p->sx = bx; p->sy = by; p->lx = bx; p->ly = by; p->br = ib; p->sp = pt; }
+                if (p->sx < 0) { p->sx = bx; p->sy = by; p->lx = bx; p->ly = by; p->sp = pt; }
                 if (!p->br.h) continue;                  /* a brush without preview */
-                if (!p->drawing && abs(bx - p->sx) + abs(by - p->sy) < (p->br.gate ? p->br.gate : INK_START_PX)) continue;
+                /* the gate holds the stroke's first piece only: a piece after a gap goes on at once */
+                if (!p->drawing && !p->drew && abs(bx - p->sx) + abs(by - p->sy) < (p->br.gate ? p->br.gate : INK_START_PX)) continue;
                 int halo = __atomic_load_n(&ink_halo, __ATOMIC_ACQUIRE) && halo_plane;
                 if (!p->drawing) {
                     pen_dither();
@@ -3998,7 +4033,7 @@ static box pen_read(struct pen *p, int *lost, int *dropped)
                 pthread_mutex_lock(&buf_mu);
                 acc = box_union(acc, ink_seg(&p->br, &p->st, &pt, halo));
                 pthread_mutex_unlock(&buf_mu);
-                p->drawing = 1; p->lx = bx; p->ly = by;
+                p->drawing = p->drew = 1; p->lx = bx; p->ly = by;
                 p->inked_ms = now_ms();
             }
         }

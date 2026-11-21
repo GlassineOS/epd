@@ -68,6 +68,7 @@ drift from the code. For the settings that are knobs (`src/epd-knobs.h`) see
 | `idle_ms=N` | milliseconds without damage before the GC16 cleanup (default 250; values below 50 are raised to 50) |
 | `gpu=off\|on\|check`, `gpe=…`, `gtarget=…`, `dry=on\|off` | set an environment variable and re-exec the daemon (`dry=` is live when the userspace engine is open) |
 | `drag …`, `impostor …` | pen/tile helpers, X only; their forms are in `drag_cmd` and `impostor` |
+| `ink begin` … `ink end` | the pen's ink areas, sent by the compositor (sway's `glassine-ink-area.c`) whenever they change: the areas, their brushes, and per owner (window, popup, layer surface) a key and, for owners with writing regions, the visible region. A pen stroke inks only if it starts in an area, and then only on its owner's part of the panel; the lines and that rule are in `src/epd-inkarea.h` |
 
 The log goes to the daemon's stderr; where that ends up depends on how the session
 starts the daemon, which isn't in this repository.
